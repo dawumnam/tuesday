@@ -1,6 +1,7 @@
 ---
-status: open
+status: closed
 blocked-by: [02, 04, 07]
+closed-by: a553066
 ---
 # 11 Batch generation, app container, runbook
 

@@ -56,20 +56,34 @@ services:
       LANGFUSE_INIT_USER_NAME: admin
       LANGFUSE_INIT_USER_PASSWORD: admin1234
 
-  # Stub: ticket 11 adds the Dockerfile and finishes this service.
+  # Streamlit UI. Starts with `docker compose up`: migrates on start, seeds if
+  # TD_SEED_ON_START=true. Every TD_* variable in .env reaches the app (API key,
+  # routing, thresholds); the DB and Langfuse addresses below always win.
   app:
-    profiles: ["app"]
     build: .
     depends_on:
       db:
         condition: service_healthy
+      langfuse:
+        condition: service_started
+    env_file:
+      - path: .env
+        required: false
     environment:
       TD_DATABASE_URL: postgresql://task_design:task_design@db:5432/task_design
       TD_LANGFUSE_HOST: http://langfuse:3000
       TD_LANGFUSE_PUBLIC_KEY: pk-lf-local
       TD_LANGFUSE_SECRET_KEY: sk-lf-local
+      TD_LANGFUSE_PROJECT_ID: task-design
+      TD_SEED_ON_START: ${TD_SEED_ON_START:-false}
     ports:
       - "8501:8501"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
 
 volumes:
   db-data:
