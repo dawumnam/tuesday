@@ -17,6 +17,7 @@ from task_design.domain import (
 )
 from task_design.gateway import Message, Role
 from task_design.workflow import prompts
+from task_design.workflow.errors import InvalidModelContent
 from task_design.workflow.schemas import (
     AttachmentBatch,
     InstructionDraft,
@@ -26,10 +27,6 @@ from task_design.workflow.schemas import (
 from task_design.workflow.state import Deps, WorkflowState, candidates, draft_id, draft_input, dump
 
 M = TypeVar("M", bound=BaseModel)
-
-
-class InvalidModelContent(ValueError):
-    """The model kept producing schema-valid output that breaks a domain rule."""
 
 
 def complete_checked(
@@ -58,7 +55,8 @@ def complete_checked(
             Message(role="user", content="다음 문제를 고쳐 다시 작성하세요:\n"
                     + "\n".join(f"- {p}" for p in problems)),
         ]
-    raise InvalidModelContent(f"{schema.__name__}: {'; '.join(problems)}")
+    raise InvalidModelContent(
+        f"모델 응답이 규칙을 계속 어겼습니다 ({schema.__name__}): {'; '.join(problems)}")
 
 
 def _competencies(deps: Deps, input: DraftInput) -> list[Competency]:

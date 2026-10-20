@@ -69,7 +69,7 @@ def test_demo_fail_marker_in_the_memo_ends_with_a_failure_report(db, settings):
     done = service.select_scenario(draft.id, draft.candidates[0].id)
 
     assert done.state is DraftState.AWAITING_REVIEW
-    assert len(done.rounds) == settings.max_rounds
+    assert len(done.rounds) == settings.max_fix_rounds + 1
     assert done.failure_report is not None
 
 

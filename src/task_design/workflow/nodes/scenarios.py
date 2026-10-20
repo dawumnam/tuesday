@@ -11,6 +11,7 @@ from langgraph.types import interrupt
 from task_design.domain import DraftState, ScenarioCandidate
 from task_design.gateway import Role, Vector
 from task_design.workflow import prompts
+from task_design.workflow.errors import CandidatesExhausted
 from task_design.workflow.schemas import CandidateBatch, CandidateProposal
 from task_design.workflow.state import (
     Deps,
@@ -43,12 +44,14 @@ def search_similar_tasks(deps: Deps, state: WorkflowState) -> dict[str, Any]:
 
 
 def generate_candidates(deps: Deps, state: WorkflowState) -> dict[str, Any]:
-    """Generate 3 mutually distinct 상황 후보, none a duplicate of a task in the DB.
+    """Generate 3 mutually distinct 상황 후보, none a duplicate of a task in the DB and
+    none already shown for this draft.
 
-    A proposal whose scenario embedding is within ``duplicate_threshold`` of an
-    existing task or of an already-accepted candidate is dropped and replaced by
-    another generation call, up to ``candidate_generation_attempts`` calls. If
-    the budget runs out, the slots are filled with the least bad rejects.
+    A proposal that was already shown, or whose scenario embedding is within
+    ``duplicate_threshold`` of an existing task or of an already-accepted candidate,
+    is dropped and replaced by another generation call, up to
+    ``candidate_generation_attempts`` calls. If those run out first, the run fails
+    with ``CandidatesExhausted`` (the draft can be retried).
     """
     did, input, similar = draft_id(state), draft_input(state), similar_tasks(state)
     comps = [c for cid in input.competency_ids if (c := deps.competencies.get(cid))]
@@ -57,33 +60,36 @@ def generate_candidates(deps: Deps, state: WorkflowState) -> dict[str, Any]:
     shown = list(state.get("shown_scenarios", []))
 
     accepted: list[tuple[CandidateProposal, Vector]] = []
-    rejected: list[tuple[float, CandidateProposal]] = []
+    rejected: list[str] = []
     for _ in range(max(1, deps.settings.candidate_generation_attempts)):
         needed = CANDIDATE_COUNT - len(accepted)
-        avoid = shown + [p.scenario for p, _ in accepted] + [p.scenario for _, p in rejected]
+        avoid = shown + [p.scenario for p, _ in accepted] + rejected
         batch = deps.gateway.complete(
             Role.GENERATION,
             prompts.scenario_candidates(input, comps, similar, count=needed, avoid=avoid),
             schema=CandidateBatch,
             draft_id=did,
         )
-        proposals = batch.candidates[:needed]
+        proposals = [p for p in batch.candidates if p.scenario not in shown][:needed]
+        rejected += [p.scenario for p in batch.candidates if p.scenario in shown]
         if not proposals:
             continue
         vectors = deps.gateway.embed([p.scenario for p in proposals], draft_id=did)
         for proposal, vector in zip(proposals, vectors, strict=True):
             db_dups = deps.tasks.find_duplicates_of_vector(vector, threshold)
             peer = max((_cosine(vector, v) for _, v in accepted), default=0.0)
-            worst = max([peer] + [d.similarity for d in db_dups])
-            if worst >= threshold or proposal.scenario in shown:
-                rejected.append((worst, proposal))
+            if db_dups or peer >= threshold:
+                rejected.append(proposal.scenario)
             else:
                 accepted.append((proposal, vector))
         if len(accepted) == CANDIDATE_COUNT:
             break
+    else:
+        raise CandidatesExhausted(
+            f"기존 과제·이미 보여 준 후보와 겹치지 않는 상황 후보를 {CANDIDATE_COUNT}개 만들지 "
+            f"못했습니다 ({len(accepted)}개만 통과)."
+        )
 
-    chosen = [p for p, _ in accepted]
-    chosen += [p for _, p in sorted(rejected, key=lambda r: r[0])][: CANDIDATE_COUNT - len(chosen)]
     result = [
         ScenarioCandidate(
             title=p.title,
@@ -91,7 +97,7 @@ def generate_candidates(deps: Deps, state: WorkflowState) -> dict[str, Any]:
             referenced_task_ids=[UUID(r) for r in dict.fromkeys(p.referenced_task_ids)
                                  if r in similar_ids],
         )
-        for p in chosen
+        for p, _ in accepted
     ]
     deps.drafts.set_candidates(did, result)
     return {"candidates": [dump(c) for c in result]}

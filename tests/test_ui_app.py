@@ -180,7 +180,7 @@ def test_review_screen_shows_the_failure_report(demo):
     at = open_app(staff=2, draft=draft.id)
 
     assert any("실패 리포트" in w.value for w in at.warning)
-    assert [t.label for t in at.tabs] == ["1회차", "2회차", "3회차"]
+    assert [t.label for t in at.tabs] == ["1회차", "2회차", "3회차", "4회차"]
 
 
 # --- 초안 목록 · 대시보드 -------------------------------------------------------------

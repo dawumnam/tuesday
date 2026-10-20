@@ -106,6 +106,18 @@ class PersonaStatus(_KoEnum):
     DONE = "done"
 
 
+class DraftErrorKind(_KoEnum):
+    """Why the draft's last workflow run failed (``Draft.error_kind``); the UI picks its
+    Korean explanation by kind. Every failed run can be resumed with ``retry``."""
+
+    INTERRUPTED = "interrupted"  # the app restarted while the run was going
+    CANDIDATES_EXHAUSTED = "candidates_exhausted"  # no 3 non-duplicate 상황 후보 found
+    INVALID_MODEL_OUTPUT = "invalid_model_output"  # the model kept breaking the schema/rules
+    MODEL_UNAVAILABLE = "model_unavailable"  # timeout, connection or provider error
+    CONFIGURATION = "configuration"  # e.g. no provider configured for a role
+    UNEXPECTED = "unexpected"
+
+
 class IntervalKind(_KoEnum):
     HUMAN_ACTIVE = "human_active"
     AGENT_RUN = "agent_run"
@@ -152,6 +164,12 @@ _KO: dict[StrEnum, str] = {
     PersonaStatus.PENDING: "대기",
     PersonaStatus.RUNNING: "응시 중",
     PersonaStatus.DONE: "제출 완료",
+    DraftErrorKind.INTERRUPTED: "실행 중단",
+    DraftErrorKind.CANDIDATES_EXHAUSTED: "상황 후보 부족",
+    DraftErrorKind.INVALID_MODEL_OUTPUT: "모델 응답 형식 오류",
+    DraftErrorKind.MODEL_UNAVAILABLE: "모델 서비스 오류",
+    DraftErrorKind.CONFIGURATION: "설정 오류",
+    DraftErrorKind.UNEXPECTED: "예상하지 못한 오류",
     IntervalKind.HUMAN_ACTIVE: "사람 활성",
     IntervalKind.AGENT_RUN: "에이전트 실행",
 }
@@ -416,7 +434,8 @@ class Draft(BaseModel):
     persona_status: dict[Level, PersonaStatus] = Field(default_factory=dict)
     failure_report: FailureReport | None = None
     review: Review | None = None
-    error: str | None = None  # last workflow failure, if the run crashed
+    error: str | None = None  # last workflow failure (raw, for the 오류 상세), if the run crashed
+    error_kind: DraftErrorKind | None = None  # its kind (set whenever ``error`` is)
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

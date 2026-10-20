@@ -135,18 +135,22 @@ def verdict_line(round: DraftRound) -> str:
 
 
 def show_failure_report(report: FailureReport) -> None:
-    lines = [f"**실패 리포트** · 실패 유형: {', '.join(f.ko for f in report.failure_types)}"]
-    if report.stopped_by_token_budget:
+    failures = ", ".join(f.ko for f in report.failure_types) or "판정 전"
+    lines = [f"**실패 리포트** · 실패 유형: {failures}"]
+    if report.stopped_by_token_budget and not report.scores_by_round:
+        lines.append("모의 응시 전에 토큰 예산을 다 써서 검증하지 못했습니다. 직접 검토하세요.")
+    elif report.stopped_by_token_budget:
         lines.append("토큰 예산 초과로 중단되었습니다.")
     else:
         lines.append("자기 수정 루프를 모두 쓰고도 검증에 실패했습니다. 직접 고쳐 쓸지 판단하세요.")
     st.warning("\n\n".join(lines), icon="⚠️")
-    table = pd.DataFrame([
-        {"회차": f"{n}회차", **{lv.ko: round_(scores.get(lv, float("nan"))) for lv in LEVELS}}
-        for n, scores in enumerate(report.scores_by_round, start=1)
-    ])
-    st.caption("회차별 평균 점수")
-    st.dataframe(table, hide_index=True, width="stretch")
+    if report.scores_by_round:
+        table = pd.DataFrame([
+            {"회차": f"{n}회차", **{lv.ko: round_(scores.get(lv, float("nan"))) for lv in LEVELS}}
+            for n, scores in enumerate(report.scores_by_round, start=1)
+        ])
+        st.caption("회차별 평균 점수")
+        st.dataframe(table, hide_index=True, width="stretch")
     if report.attempted_fixes:
         st.caption("시도한 수정")
         for fix in report.attempted_fixes:

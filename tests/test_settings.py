@@ -9,7 +9,7 @@ def test_defaults_route_every_role_to_gemini():
         assert s.route(role).provider is Provider.GEMINI
     assert s.route(Role.GENERATION).thinking is ThinkingLevel.HIGH
     assert (s.solvable_min_score, s.discrimination_min_gap, s.grading_max_stdev) == (70, 30, 5)
-    assert (s.duplicate_threshold, s.max_rounds) == (0.85, 3)
+    assert (s.duplicate_threshold, s.max_fix_rounds) == (0.85, 3)
 
 
 def test_env_overrides_thresholds_and_a_single_role(monkeypatch):

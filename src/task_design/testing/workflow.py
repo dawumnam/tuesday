@@ -29,6 +29,7 @@ from pydantic import BaseModel
 
 from task_design.db import Database
 from task_design.domain import (
+    Attachment,
     Audience,
     Draft,
     DraftInput,
@@ -41,7 +42,7 @@ from task_design.domain import (
 from task_design.gateway import ModelGateway, Role
 from task_design.repositories import TaskRepository
 from task_design.settings import Settings
-from task_design.testing.fake_gateway import FakeCall, FakeGateway
+from task_design.testing.fake_gateway import FakeCall, FakeGateway, FakeResponse
 from task_design.workflow import prompts
 from task_design.workflow.schemas import (
     AttachmentBatch,
@@ -233,10 +234,18 @@ class TaskWriter:
     Each call returns a new numbered version, so a regenerated part is
     distinguishable (``instructions`` / ``rubrics`` list everything written).
     Rubric items use ``RUBRIC_POINTS`` and the given competency ids.
+    ``output_tokens(part, n)``, if given, sets the reported output tokens of the
+    ``n``-th (1-based) ``"instruction"`` / ``"attachments"`` / ``"rubric"`` call
+    (``None``: the usual estimate), e.g. to make one rewrite blow the token budget.
     """
 
-    def __init__(self, competency_ids: Sequence[str] = ("C1",)) -> None:
+    def __init__(
+        self,
+        competency_ids: Sequence[str] = ("C1",),
+        output_tokens: Callable[[str, int], int | None] | None = None,
+    ) -> None:
         self.competency_ids = list(competency_ids)
+        self._output_tokens = output_tokens
         self.instructions: list[str] = []
         self.rubrics: list[dict] = []
         self.attachments: list[dict] = []
@@ -246,13 +255,18 @@ class TaskWriter:
         return {InstructionDraft: self.instruction, AttachmentBatch: self.attachment_batch,
                 RubricDraft: self.rubric}
 
-    def instruction(self, call: FakeCall) -> dict:
-        with self._lock:
-            text = f"지시문 v{len(self.instructions) + 1}: 첨부한 매출 CSV를 검증해 요약 보고서를 제출하라."
-            self.instructions.append(text)
-        return {"instruction": text}
+    def _priced(self, part: str, n: int, value: dict) -> dict | FakeResponse:
+        tokens = self._output_tokens(part, n) if self._output_tokens else None
+        return value if tokens is None else FakeResponse(value, output_tokens=tokens)
 
-    def attachment_batch(self, call: FakeCall) -> dict:
+    def instruction(self, call: FakeCall) -> dict | FakeResponse:
+        with self._lock:
+            n = len(self.instructions) + 1
+            text = f"지시문 v{n}: 첨부한 매출 CSV를 검증해 요약 보고서를 제출하라."
+            self.instructions.append(text)
+        return self._priced("instruction", n, {"instruction": text})
+
+    def attachment_batch(self, call: FakeCall) -> dict | FakeResponse:
         with self._lock:
             n = len(self.attachments) + 1
             batch = {"attachments": [{
@@ -263,9 +277,13 @@ class TaskWriter:
                           {"location": "5행 합계", "description": "합계가 실제(340)와 다름"}],
             }]}
             self.attachments.append(batch)
-        return batch
+        return self._priced("attachments", n, batch)
 
-    def rubric(self, call: FakeCall) -> dict:
+    def attachment_models(self, index: int) -> list[Attachment]:
+        """The ``index``-th 첨부 자료 batch written (0 = the first), as domain objects."""
+        return AttachmentBatch.model_validate(self.attachments[index]).attachments
+
+    def rubric(self, call: FakeCall) -> dict | FakeResponse:
         with self._lock:
             n = len(self.rubrics) + 1
             types = ["process", "output", "output"]
@@ -280,7 +298,7 @@ class TaskWriter:
             } for i, points in enumerate(RUBRIC_POINTS)]
             rubric = {"items": items}
             self.rubrics.append(rubric)
-        return rubric
+        return self._priced("rubric", n, rubric)
 
 
 CONSISTENT_REVIEW = {"consistent": True, "target": None, "issues": []}

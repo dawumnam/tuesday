@@ -15,6 +15,7 @@ from pydantic import TypeAdapter
 from task_design.db import Database
 from task_design.domain import (
     Draft,
+    DraftErrorKind,
     DraftInput,
     DraftRound,
     DraftState,
@@ -32,7 +33,7 @@ from task_design.domain import (
 _COLUMNS = (
     "id, author_id, input, state, stage, similar_tasks, candidates, "
     "selected_candidate_id, error, created_at, updated_at, "
-    "task, rounds, persona_status, failure_report"
+    "task, rounds, persona_status, failure_report, error_kind"
 )
 _TASKS = TypeAdapter(list[Task])
 _CANDIDATES = TypeAdapter(list[ScenarioCandidate])
@@ -105,7 +106,7 @@ class DraftStore:
         if row is None:
             raise DraftNotFound("초안을 찾을 수 없습니다.")
         (id_, author, input_, state, stage, similar, candidates, selected, error, created,
-         updated, task, rounds, persona_status, failure_report) = row
+         updated, task, rounds, persona_status, failure_report, error_kind) = row
         return Draft(
             id=id_,
             author_id=author,
@@ -116,6 +117,7 @@ class DraftStore:
             candidates=_CANDIDATES.validate_python(candidates),
             selected_candidate_id=selected,
             error=error,
+            error_kind=DraftErrorKind(error_kind) if error_kind else None,
             task=Task.model_validate(task) if task is not None else None,
             rounds=_ROUNDS.validate_python(rounds),
             persona_status=_PERSONA_STATUS.validate_python(persona_status),
@@ -169,8 +171,8 @@ class DraftStore:
         """Atomically move ``expected`` → ``new``; raise if the draft is elsewhere."""
         with self._db.connection() as conn:
             cur = conn.execute(
-                "UPDATE drafts SET state = %s, error = NULL, updated_at = now() "
-                "WHERE id = %s AND state = %s",
+                "UPDATE drafts SET state = %s, error = NULL, error_kind = NULL, "
+                "updated_at = now() WHERE id = %s AND state = %s",
                 (new.value, draft_id, expected.value),
             )
             updated = cur.rowcount
@@ -190,7 +192,7 @@ class DraftStore:
         """
         with self._db.connection() as conn:
             cur = conn.execute(
-                "UPDATE drafts SET state = %s, selected_candidate_id = %s, error = NULL, "
+                "UPDATE drafts SET state = %s, selected_candidate_id = %s, error = NULL, error_kind = NULL, "
                 "updated_at = now() "
                 "WHERE id = %s AND state = %s "
                 "AND candidates @> jsonb_build_array(jsonb_build_object('id', %s::text))",
@@ -258,7 +260,7 @@ class DraftStore:
         """
         with self._db.connection() as conn:
             updated = conn.execute(
-                "UPDATE drafts SET error = NULL, updated_at = now() "
+                "UPDATE drafts SET error = NULL, error_kind = NULL, updated_at = now() "
                 "WHERE id = %s AND error IS NOT NULL",
                 (draft_id,),
             ).rowcount
@@ -267,12 +269,14 @@ class DraftStore:
             raise InvalidDraftState("실패한 실행이 없어 다시 시도할 수 없습니다.")
 
     def mark_interrupted(self, message: str) -> list[UUID]:
-        """Give every draft left running (생성 중 / 검증 중, no error) the error ``message``."""
+        """Give every draft left running (생성 중 / 검증 중, no error) the error ``message``
+        of kind ``DraftErrorKind.INTERRUPTED``."""
         with self._db.connection() as conn:
             rows = conn.execute(
-                "UPDATE drafts SET error = %s, stage = NULL, updated_at = now() "
+                "UPDATE drafts SET error = %s, error_kind = %s, stage = NULL, updated_at = now() "
                 "WHERE state = ANY(%s) AND error IS NULL RETURNING id",
-                (message, [DraftState.GENERATING.value, DraftState.VERIFYING.value]),
+                (message, DraftErrorKind.INTERRUPTED.value,
+                 [DraftState.GENERATING.value, DraftState.VERIFYING.value]),
             ).fetchall()
         return [r[0] for r in rows]
 
@@ -282,8 +286,8 @@ class DraftStore:
     def set_stage(self, draft_id: UUID, stage: Stage | None) -> None:
         self._update(draft_id, "stage = %s", stage.value if stage else None)
 
-    def set_error(self, draft_id: UUID, error: str) -> None:
-        self._update(draft_id, "error = %s", error)
+    def set_error(self, draft_id: UUID, error: str, kind: DraftErrorKind) -> None:
+        self._update(draft_id, "error = %s, error_kind = %s", (error, kind.value))
 
     def set_similar_tasks(self, draft_id: UUID, tasks: list[Task]) -> None:
         self._update(draft_id, "similar_tasks = %s", _dump(_TASKS, tasks))

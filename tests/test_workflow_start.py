@@ -9,7 +9,7 @@ import uuid
 import pytest
 
 from task_design.db import Database
-from task_design.domain import DraftState, Stage
+from task_design.domain import DraftErrorKind, DraftState, Stage
 from task_design.gateway import Role
 from task_design.repositories import TaskRepository
 from task_design.service import InvalidDraftInput, TaskDesignService
@@ -103,6 +103,65 @@ def test_candidates_too_similar_to_each_other_are_regenerated(
     scenarios = [c.scenario for c in draft.candidates]
     assert len(scenarios) == 3
     assert first in scenarios and twin not in scenarios
+
+
+def test_a_start_that_cannot_find_three_non_duplicate_candidates_fails_and_can_be_retried(
+    service, fake_gateway, db, settings
+):
+    existing = f"기존 과제 {uuid.uuid4().hex}"
+    v = random_unit(settings.embedding_dim)
+    fake_gateway.set_embedding(existing, v)
+    ensure_competencies(db)
+    TaskRepository(db, fake_gateway, settings).add(make_task(existing), source="seed")
+
+    def near_copies(call):
+        texts = [f"거의 같은 상황 {uuid.uuid4().hex}" for _ in range(3)]
+        for t in texts:
+            fake_gateway.set_embedding(t, with_cosine(v, 0.95))
+        return scripted_batch(*texts)(call)
+
+    fake_gateway.respond_with(Role.GENERATION, near_copies)
+
+    stuck = service.start(make_input(), author_id=1)
+
+    assert stuck.state is DraftState.GENERATING
+    assert stuck.error_kind is DraftErrorKind.CANDIDATES_EXHAUSTED
+    assert stuck.candidates == []
+
+    fake_gateway.respond_with(Role.GENERATION, ScenarioWriter())
+    retried = service.retry(stuck.id)
+    assert retried.state is DraftState.AWAITING_SCENARIO_SELECTION
+    assert retried.error is None and retried.error_kind is None
+    assert len(retried.candidates) == 3
+
+
+def test_regeneration_never_offers_a_scenario_that_was_already_shown(
+    service, fake_gateway, db, settings
+):
+    draft = start_awaiting_selection(service, fake_gateway, db, settings)
+    shown = [c.scenario for c in draft.candidates]
+    fake_gateway.respond_with(Role.GENERATION, scripted_batch(*shown))
+
+    stuck = service.regenerate_scenarios(draft.id)
+
+    assert stuck.error_kind is DraftErrorKind.CANDIDATES_EXHAUSTED
+    assert stuck.state is DraftState.GENERATING
+
+
+def test_regeneration_skips_already_shown_scenarios_and_keeps_looking(
+    service, fake_gateway, db, settings
+):
+    draft = start_awaiting_selection(service, fake_gateway, db, settings)
+    shown = [c.scenario for c in draft.candidates]
+    writer = ScenarioWriter()
+    fake_gateway.script(Role.GENERATION, scripted_batch(shown[0], shown[1], "새 후보 " + uuid.uuid4().hex))
+    fake_gateway.respond_with(Role.GENERATION, writer)
+
+    again = service.regenerate_scenarios(draft.id)
+
+    offered = [c.scenario for c in again.candidates]
+    assert len(offered) == 3
+    assert not set(shown) & set(offered)
 
 
 def test_regenerate_replaces_candidates_with_three_new_ones(service, fake_gateway, db, settings):

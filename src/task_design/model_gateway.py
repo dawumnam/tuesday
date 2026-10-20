@@ -30,6 +30,10 @@ class InvalidModelOutput(Exception):
         self.error = error
 
 
+class ProviderNotConfigured(LookupError):
+    """No provider client is configured for the role's ``RoleConfig.provider``."""
+
+
 def _retry_prompt(error: ValidationError) -> str:
     problems = "\n".join(
         f"- {'.'.join(str(p) for p in e['loc']) or '(root)'}: {e['msg']}" for e in error.errors()
@@ -119,7 +123,7 @@ class RoutedGateway:
         config = self.settings.route(role)
         provider = self.providers.get(config.provider)
         if provider is None:
-            raise LookupError(f"no {config.provider} provider configured for role {role}")
+            raise ProviderNotConfigured(f"{role} 역할에 설정된 공급자({config.provider})가 없습니다.")
         return config, provider
 
     def _generate(

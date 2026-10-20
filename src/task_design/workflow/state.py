@@ -48,6 +48,7 @@ class WorkflowState(TypedDict, total=False):
     submissions: Annotated[list[dict[str, Any]], operator.add]
     gradings: Annotated[list[dict[str, Any]], operator.add]
     verdict: dict[str, Any]  # Verdict of the latest verified round
+    verified_round: int  # number of that round (≠ round: the current round is unverified)
     # --- 자기 수정 루프 (ticket 07) ---
     discrimination_fixes: int  # 변별력 부족 fixes so far (채점 기준 and 함정 alternate)
 

@@ -177,6 +177,6 @@ def judge(deps: Deps, state: WorkflowState) -> dict[str, Any]:
         mock_exam_results=results,
         verdict=verdict,
     ))
-    return {"verdict": dump(verdict)}
+    return {"verdict": dump(verdict), "verified_round": state["round"]}
 
 

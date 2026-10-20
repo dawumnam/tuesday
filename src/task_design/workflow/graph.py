@@ -5,15 +5,17 @@ Graph::
     START → search_similar_tasks → generate_candidates → await_selection ─┬─ regenerate → generate_candidates
                                                                           └─ select → write_instruction
     write_instruction → write_attachments → write_rubric → review_task
-      → start_mock_exam ══Send×3══▶ run_persona (상·중·하 in parallel)
+      → BUDGET CHECK ─┬─ over → finish
+                      └─ start_mock_exam ══Send×3══▶ run_persona (상·중·하 in parallel)
       → start_grading   ══Send×9══▶ grade_submission (3 per submission, in parallel)
       → judge ── VERDICT EDGE (fix.route_after_verdict / VERDICT_ROUTES) ─┬─ finish → END
-                                                                          └─ fix → start_mock_exam
+                                                                          └─ fix → BUDGET CHECK
 
-자기 수정 루프: while the verdict fails and rounds (``settings.max_rounds``) and
+자기 수정 루프: while the verdict fails and fixes (``settings.max_fix_rounds``) and
 the draft's token budget remain, ``fix`` regenerates one component, bumps
-``round`` and sets ``round_changes``; ``judge`` records the new round. ``finish``
-attaches the 실패 리포트 when the loop stopped while still failing.
+``round`` and sets ``round_changes``; ``judge`` records the new round. The token
+budget is also checked before every round's 모의 응시 (BUDGET CHECK). ``finish``
+attaches the 실패 리포트 when the loop stopped while still failing or unverified.
 
 Each node is ``fn(deps, state) -> partial state``; when the spec has a
 ``stage``, the draft's ``stage`` column is set before the node runs.
@@ -34,6 +36,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 
 from task_design.domain import DraftInput, DraftState, Stage
+from task_design.workflow.errors import error_kind_of
 from task_design.workflow.nodes import fix, generation, mock_exam, scenarios
 from task_design.workflow.state import Deps, WorkflowState, draft_id
 
@@ -67,6 +70,8 @@ AFTER_SELECTION = N.WRITE_INSTRUCTION
 # THE VERDICT EDGE: fix.route_after_verdict's return value → next node.
 # "fix" regenerates one component and re-runs the 모의 응시 (자기 수정 루프).
 VERDICT_ROUTES: dict[str, str] = {fix.FINISH: N.FINISH, fix.FIX: N.FIX}
+# Before each round's 모의 응시: over the token budget → finish unverified.
+MOCK_EXAM_ROUTES: dict[str, str] = {fix.MOCK_EXAM: N.START_MOCK_EXAM, fix.FINISH: N.FINISH}
 
 
 @dataclass(frozen=True)
@@ -122,7 +127,8 @@ def build_graph(deps: Deps, checkpointer: PostgresSaver | None) -> CompiledState
     g.add_edge(N.WRITE_INSTRUCTION, N.WRITE_ATTACHMENTS)
     g.add_edge(N.WRITE_ATTACHMENTS, N.WRITE_RUBRIC)
     g.add_edge(N.WRITE_RUBRIC, N.REVIEW_TASK)
-    g.add_edge(N.REVIEW_TASK, N.START_MOCK_EXAM)
+    to_mock_exam = functools.partial(fix.route_to_mock_exam, deps=deps)  # token budget
+    g.add_conditional_edges(N.REVIEW_TASK, to_mock_exam, MOCK_EXAM_ROUTES)
     g.add_conditional_edges(N.START_MOCK_EXAM, mock_exam.fan_out_personas, [N.RUN_PERSONA])
     g.add_edge(N.RUN_PERSONA, N.START_GRADING)
     g.add_conditional_edges(
@@ -134,7 +140,7 @@ def build_graph(deps: Deps, checkpointer: PostgresSaver | None) -> CompiledState
     g.add_edge(N.GRADE_SUBMISSION, N.JUDGE)
     g.add_conditional_edges(  # VERDICT EDGE
         N.JUDGE, functools.partial(fix.route_after_verdict, deps=deps), VERDICT_ROUTES)
-    g.add_edge(N.FIX, N.START_MOCK_EXAM)
+    g.add_conditional_edges(N.FIX, to_mock_exam, MOCK_EXAM_ROUTES)
     g.add_edge(N.FINISH, END)
     return g.compile(checkpointer=checkpointer)
 
@@ -189,7 +195,8 @@ class Workflow:
             self._graph.invoke(payload, config)
         except Exception as exc:  # recorded on the draft; get_draft shows it
             log.exception("workflow run for draft %s failed", draft_id)
-            self._deps.drafts.set_error(draft_id, f"{type(exc).__name__}: {exc}")
+            self._deps.drafts.set_error(draft_id, f"{type(exc).__name__}: {exc}",
+                                        error_kind_of(exc))
             return
         for pending in self._graph.get_state(config).interrupts:
             self._deps.drafts.set_state(draft_id, DraftState(pending.value["state"]))

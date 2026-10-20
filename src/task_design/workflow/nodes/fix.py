@@ -1,10 +1,13 @@
 """자기 수정 루프: after a failed 판정, regenerate one component and verify again.
 
-``route_after_verdict`` decides (pass → finish; failure with rounds and token
-budget left → fix; otherwise finish with a 실패 리포트). ``fix`` handles the
-first failing type in order (풀이 불가 → 지시문; 변별력 부족 → 채점 기준 and
-함정 in turn; 채점 불일치 → 채점 기준의 판정 서술 only), then the graph goes
-back to the 모의 응시. The 상황 is never touched.
+``route_after_verdict`` decides (pass → finish; failure with fixes
+(``settings.max_fix_rounds``) and token budget left → fix; otherwise finish with a
+실패 리포트). ``route_to_mock_exam`` checks the token budget again before every
+round's 모의 응시 (round 1 and after each fix): over budget, the draft goes to
+review unverified, with a 실패 리포트. ``fix`` handles the first failing type in
+order (풀이 불가 → 지시문; 변별력 부족 → 채점 기준, then 함정 with the 판정 서술
+re-synced to them, in turn; 채점 불일치 → 채점 기준의 판정 서술 only), then the
+graph goes back to the 모의 응시. The 상황 is never touched.
 """
 
 from __future__ import annotations
@@ -14,6 +17,7 @@ from typing import Any
 
 from task_design.costs import CostStore
 from task_design.domain import (
+    Attachment,
     Component,
     DraftState,
     FailureReport,
@@ -29,7 +33,7 @@ from task_design.settings import Settings
 from task_design.workflow import prompts
 from task_design.workflow.nodes import generation
 from task_design.workflow.nodes.mock_exam import round_results
-from task_design.workflow.schemas import RubricDraft
+from task_design.workflow.schemas import AttachmentBatch, RubricDraft
 from task_design.workflow.state import (
     Deps,
     WorkflowState,
@@ -42,6 +46,7 @@ from task_design.workflow.state import verdict as current_verdict
 
 FIX = "fix"
 FINISH = "finish"
+MOCK_EXAM = "mock_exam"
 
 
 def draft_tokens(deps: Deps, state: WorkflowState) -> int:
@@ -49,31 +54,53 @@ def draft_tokens(deps: Deps, state: WorkflowState) -> int:
     return sum(c.input_tokens + c.output_tokens for c in CostStore(deps.db).for_draft(draft_id(state)))
 
 
+def over_budget(deps: Deps, state: WorkflowState) -> bool:
+    return draft_tokens(deps, state) > deps.settings.draft_token_budget
+
+
+def route_to_mock_exam(state: WorkflowState, *, deps: Deps) -> str:
+    """Before each round's 모의 응시: "mock_exam" unless the token budget is used up."""
+    return FINISH if over_budget(deps, state) else MOCK_EXAM
+
+
 def route_after_verdict(state: WorkflowState, *, deps: Deps) -> str:
-    """THE VERDICT EDGE: "fix" while failures remain and rounds and token budget are left."""
+    """THE VERDICT EDGE: "fix" while failures remain and fixes and token budget are left."""
     verdict = current_verdict(state)
     if verdict is None or verdict.passed:
         return FINISH
-    if state["round"] >= deps.settings.max_rounds:
+    if _fixes_done(state) >= deps.settings.max_fix_rounds:
         return FINISH
-    if draft_tokens(deps, state) > deps.settings.draft_token_budget:
+    if over_budget(deps, state):
         return FINISH
     return FIX
 
 
+def _fixes_done(state: WorkflowState) -> int:
+    return state["round"] - 1
+
+
 def failure_report(deps: Deps, state: WorkflowState) -> FailureReport | None:
-    """실패 리포트 for a draft that stops while its latest round still fails, else None."""
+    """실패 리포트 for a draft that stops while failing or unverified, else None.
+
+    Unverified: the token budget ran out before the current round's 모의 응시 (its
+    changes, if it is a fix round, count as an attempted fix).
+    """
     verdict = current_verdict(state)
-    if verdict is None or verdict.passed:
+    unverified = state.get("verified_round") != state["round"]
+    if not unverified and (verdict is None or verdict.passed):
         return None
     rounds = deps.drafts.get(draft_id(state)).rounds
+    attempted = [rnd.change_reason for rnd in rounds if rnd.number > 1]
+    if unverified and state["round"] > 1:
+        attempted.append(state["round_changes"]["reason"])
     return FailureReport(
-        failure_types=verdict.failures,
+        failure_types=verdict.failures if verdict else [],
         scores_by_round=[
             {r.persona_level: r.mean_score for r in rnd.mock_exam_results} for rnd in rounds
         ],
-        attempted_fixes=[rnd.change_reason for rnd in rounds if rnd.number > 1],
-        stopped_by_token_budget=state["round"] < deps.settings.max_rounds,
+        attempted_fixes=attempted,
+        stopped_by_token_budget=unverified
+        or _fixes_done(state) < deps.settings.max_fix_rounds,
     )
 
 
@@ -170,6 +197,36 @@ def _rewrite_criteria(deps: Deps, state: WorkflowState, the_task: Task, issues: 
     ])
 
 
+_TRAPS_ONLY = ("수준별 검증 행동의 차이가 드러나도록 함정만 다시 설계하세요. 첨부 자료의 수, 순서, "
+               "파일 이름, 형식은 그대로 두고, 내용은 새 함정을 심는 데 필요한 부분만 고치세요.")
+_RESYNC_CRITERIA = "첨부 자료의 함정이 바뀌었습니다. 판정 기준이 새 함정을 가리키도록 고치세요."
+
+
+def _rewrite_traps(
+    deps: Deps, state: WorkflowState, the_task: Task, issues: list[str]
+) -> list[Attachment]:
+    """변별력 부족 (함정 turn): new 함정 in the same files; files, order and formats stay."""
+    previous = the_task.attachments
+
+    def problems(batch: AttachmentBatch) -> list[str]:
+        out = []
+        if len(batch.attachments) != len(previous):
+            out.append(f"첨부 자료는 {len(previous)}개 그대로여야 합니다")
+        if not all(a.traps for a in batch.attachments):
+            out.append("첨부 자료마다 함정을 1개 이상 표시해야 합니다")
+        return out
+
+    batch = generation.complete_checked(
+        deps, Role.GENERATION,
+        prompts.attachments(draft_input(state), generation._competencies(deps, draft_input(state)),
+                            the_task.scenario, the_task.instruction, previous=previous,
+                            issues=[*issues, _TRAPS_ONLY]),
+        AttachmentBatch, problems, draft_id=draft_id(state),
+    )
+    return [new.model_copy(update={"filename": old.filename, "format": old.format})
+            for old, new in zip(previous, batch.attachments, strict=True)]
+
+
 def fix(deps: Deps, state: WorkflowState) -> dict[str, Any]:
     """Regenerate the component for the first failing type, then open the next round."""
     verdict: Verdict = current_verdict(state)
@@ -179,7 +236,7 @@ def fix(deps: Deps, state: WorkflowState) -> dict[str, Any]:
     update: dict[str, Any] = {}
 
     if failure is FailureType.UNSOLVABLE:
-        component, what = Component.INSTRUCTION, "지시문 재작성"
+        components, what = [Component.INSTRUCTION], "지시문 재작성"
         instruction = generation.write_instruction_text(
             deps, state, previous=the_task.instruction, issues=issues)
         the_task = the_task.model_copy(update={"instruction": instruction})
@@ -189,21 +246,24 @@ def fix(deps: Deps, state: WorkflowState) -> dict[str, Any]:
         n = state.get("discrimination_fixes", 0)
         update["discrimination_fixes"] = n + 1
         if n % 2 == 0:
-            component, what = Component.RUBRIC, "채점 기준 재작성"
+            components, what = [Component.RUBRIC], "채점 기준 재작성"
             rubric = generation.write_rubric_model(
                 deps, state, instruction=the_task.instruction, attachments=the_task.attachments,
                 previous=the_task.rubric, issues=issues)
             the_task = the_task.model_copy(update={"rubric": rubric})
             update["rubric"] = dump(rubric)
         else:
-            component, what = Component.ATTACHMENTS, "첨부 자료의 함정 재작성"
-            attachments = generation.write_attachment_models(
-                deps, state, instruction=the_task.instruction, previous=the_task.attachments,
-                issues=[*issues, "수준별 검증 행동의 차이가 드러나도록 함정을 다시 설계하세요."])
+            # Only the 함정 change; then the criteria wording is re-synced to them.
+            components = [Component.ATTACHMENTS, Component.RUBRIC]
+            what = "첨부 자료의 함정 재작성과 채점 기준 판정 서술 재조정"
+            attachments = _rewrite_traps(deps, state, the_task, issues)
             the_task = the_task.model_copy(update={"attachments": attachments})
+            rubric = _rewrite_criteria(deps, state, the_task, [_RESYNC_CRITERIA])
+            the_task = the_task.model_copy(update={"rubric": rubric})
             update["attachments"] = [dump(a) for a in attachments]
+            update["rubric"] = dump(rubric)
     else:
-        component, what = Component.RUBRIC, "채점 기준의 판정 서술 재작성"
+        components, what = [Component.RUBRIC], "채점 기준의 판정 서술 재작성"
         rubric = _rewrite_criteria(deps, state, the_task, issues)
         the_task = the_task.model_copy(update={"rubric": rubric})
         update["rubric"] = dump(rubric)
@@ -214,6 +274,6 @@ def fix(deps: Deps, state: WorkflowState) -> dict[str, Any]:
         **update,
         "task": dump(the_task),
         "round": state["round"] + 1,
-        "round_changes": {"components": [component.value], "reason": reason},
+        "round_changes": {"components": [c.value for c in components], "reason": reason},
     }
 
