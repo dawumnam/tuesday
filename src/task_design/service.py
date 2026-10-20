@@ -6,14 +6,18 @@ from collections.abc import Callable
 from typing import Any
 from uuid import UUID, uuid4
 
+from pydantic import ValidationError
+
 from task_design.db import Database
 from task_design.domain import (
+    LABELED_COMPONENTS,
     Component,
     Draft,
     DraftInput,
     DraftState,
     Interval,
     Metrics,
+    Review,
     ReviewDecision,
     ReviewLabel,
     Staff,
@@ -38,6 +42,18 @@ class UnknownCompetency(ValueError):
     """A competency id that is not in the 역량 체계. (Message is Korean, shown in the UI.)"""
 
 
+class SelfReview(PermissionError):
+    """The reviewer is the draft's author (교차 검토 원칙)."""
+
+
+class InvalidReviewLabels(ValueError):
+    """검토 라벨 missing for 상황·지시문·채점 기준, or given for another component."""
+
+
+class InvalidEditedTask(ValueError):
+    """The reviewer's 수정본 breaks a domain rule."""
+
+
 class TaskDesignService:
     def __init__(
         self,
@@ -53,13 +69,14 @@ class TaskDesignService:
         self._run_graph = run_graph
         self._drafts = DraftStore(db)
         self._competencies = CompetencyRepository(db)
+        self._tasks = TaskRepository(db, gateway, settings)
         self._workflow = Workflow(
             Deps(
                 db=db,
                 gateway=gateway,
                 settings=settings,
                 drafts=self._drafts,
-                tasks=TaskRepository(db, gateway, settings),
+                tasks=self._tasks,
                 competencies=self._competencies,
             )
         )
@@ -140,8 +157,70 @@ class TaskDesignService:
         decision: ReviewDecision,
         edited_task: Task | None = None,
     ) -> Draft:
-        """최종 검토: confirm (into the task DB) or reject. (ticket 08)"""
-        raise NotImplementedError
+        """최종 검토: state 검토 대기 → 확정 | 반려, storing the review and its 검토 라벨.
+
+        ``labels`` must hold exactly 상황·지시문·채점 기준. ``edited_task`` is the
+        reviewer's 수정본 (default: the draft's task as the agent left it). On 확정 the
+        task (with edits) goes into the 과제 DB under the draft's id, so it is found by
+        유사 과제 검색. On 반려 the draft is kept with its labels.
+
+        Raises ``DraftNotFound``; ``SelfReview`` if the reviewer wrote the draft;
+        ``InvalidReviewLabels``; ``InvalidEditedTask`` if the 수정본 breaks a domain
+        rule; ``InvalidDraftState`` unless the draft is in 검토 대기.
+        """
+        draft = self.get_draft(draft_id)
+        if reviewer_id == draft.author_id:
+            raise SelfReview("자신이 작성한 초안은 최종 검토할 수 없습니다. 다른 담당자가 검토해야 합니다.")
+        labels = self._check_labels(labels)
+        decision = ReviewDecision(decision)
+        edited = self._check_edited_task(draft, edited_task) if edited_task is not None else None
+        review = Review(reviewer_id=reviewer_id, labels=labels, decision=decision,
+                        edited_task=edited)
+
+        def confirm() -> UUID:
+            task = (edited or draft.task).model_copy(update={"id": draft_id})
+            return self._tasks.add(task, draft_id=draft_id)
+
+        self._drafts.save_review(
+            draft_id, review, confirm=confirm if decision is ReviewDecision.CONFIRM else None
+        )
+        return self.get_draft(draft_id)
+
+    @staticmethod
+    def _check_labels(labels: dict[Any, Any]) -> dict[Component, ReviewLabel]:
+        try:
+            parsed = {Component(c): ReviewLabel(v) for c, v in labels.items()}
+        except ValueError:
+            parsed = None
+        if parsed is None or set(parsed) != set(LABELED_COMPONENTS):
+            names = "·".join(c.ko for c in LABELED_COMPONENTS)
+            raise InvalidReviewLabels(f"{names} 각각에 검토 라벨을 하나씩 붙여야 합니다.")
+        return parsed
+
+    @staticmethod
+    def _check_edited_task(draft: Draft, edited: Task | dict[str, Any]) -> Task:
+        try:
+            task = Task.model_validate(
+                edited.model_dump() if isinstance(edited, Task) else edited
+            )
+        except ValidationError as e:
+            raise InvalidEditedTask(
+                "수정본의 형식이 올바르지 않습니다. 채점 기준은 항목 3~5개에 과정 항목이 1개 이상이어야 "
+                "하고, 상황·지시문·연결 역량이 있어야 합니다."
+            ) from e
+        problems = []
+        if not task.scenario.strip() or not task.instruction.strip():
+            problems.append("상황과 지시문은 비워 둘 수 없습니다")
+        if set(task.competency_ids) - set(draft.input.competency_ids):
+            problems.append(f"연결 역량은 초안의 역량({', '.join(draft.input.competency_ids)}) "
+                            "중에서만 고를 수 있습니다")
+        if {i.competency_id for i in task.rubric.items} - set(task.competency_ids):
+            problems.append("채점 기준 항목의 역량은 연결 역량 중 하나여야 합니다")
+        if task.rubric.total_points != 100:
+            problems.append(f"배점 합계가 100점이어야 합니다 (현재 {task.rubric.total_points}점)")
+        if problems:
+            raise InvalidEditedTask("수정본을 확정할 수 없습니다: " + "; ".join(problems) + ".")
+        return task
 
     def metrics(self, period: Interval) -> Metrics:
         """Dashboard metrics over ``period``. (ticket 09)"""
