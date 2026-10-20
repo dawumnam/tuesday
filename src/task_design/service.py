@@ -34,6 +34,10 @@ def _run_inline(job: Callable[[], None]) -> None:
     job()
 
 
+class UnknownCompetency(ValueError):
+    """A competency id that is not in the 역량 체계."""
+
+
 class TaskDesignService:
     def __init__(
         self,
@@ -48,6 +52,7 @@ class TaskDesignService:
         self.settings = settings
         self._run_graph = run_graph
         self._drafts = DraftStore(db)
+        self._competencies = CompetencyRepository(db)
         self._workflow = Workflow(
             Deps(
                 db=db,
@@ -55,7 +60,7 @@ class TaskDesignService:
                 settings=settings,
                 drafts=self._drafts,
                 tasks=TaskRepository(db, gateway, settings),
-                competencies=CompetencyRepository(db),
+                competencies=self._competencies,
             )
         )
 
@@ -68,12 +73,17 @@ class TaskDesignService:
     def start(self, input: DraftInput | dict[str, Any], author_id: int) -> Draft:
         """Create a draft and generate 3 상황 후보; state 생성 중 → 상황 선택 대기.
 
-        Raises ``pydantic.ValidationError`` for invalid input (e.g. not 1–2 역량).
+        Raises ``pydantic.ValidationError`` for invalid input (e.g. not 1–2 역량) and
+        ``UnknownCompetency`` for a competency id not in the 역량 체계.
         A failing workflow step does not raise: the draft is returned with ``error`` set.
         """
         input = DraftInput.model_validate(
             input.model_dump() if isinstance(input, DraftInput) else input
         )
+        known = {c.id for c in self._competencies.list()}
+        unknown = [cid for cid in input.competency_ids if cid not in known]
+        if unknown:
+            raise UnknownCompetency(f"not in the 역량 체계: {', '.join(unknown)}")
         draft_id = uuid4()
         self._drafts.create(draft_id, author_id, input)
         self._run_graph(lambda: self._workflow.start(draft_id, input))

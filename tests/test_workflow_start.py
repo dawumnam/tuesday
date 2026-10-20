@@ -16,6 +16,7 @@ from task_design.repositories import TaskRepository
 from task_design.service import TaskDesignService
 from task_design.testing.workflow import (
     ScenarioWriter,
+    ensure_competencies,
     make_input,
     make_task,
     scripted_batch,
@@ -70,6 +71,7 @@ def test_candidate_too_similar_to_an_existing_task_is_regenerated(
     v = random_unit(settings.embedding_dim)
     fake_gateway.set_embedding(existing, v)
     fake_gateway.set_embedding(near_copy, with_cosine(v, 0.95))
+    ensure_competencies(db)
     TaskRepository(db, fake_gateway, settings).add(make_task(existing), source="seed")
     writer = ScenarioWriter()
     fake_gateway.script(Role.GENERATION, scripted_batch(near_copy, "후보 A " + uuid.uuid4().hex,
@@ -92,6 +94,7 @@ def test_candidates_too_similar_to_each_other_are_regenerated(
     v = random_unit(settings.embedding_dim)
     fake_gateway.set_embedding(first, v)
     fake_gateway.set_embedding(twin, with_cosine(v, 0.9))
+    ensure_competencies(db)
     writer = ScenarioWriter()
     fake_gateway.script(Role.GENERATION, scripted_batch(first, twin, "후보 C " + uuid.uuid4().hex))
     fake_gateway.respond_with(Role.GENERATION, writer)

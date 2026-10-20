@@ -74,10 +74,46 @@ def make_task(scenario: str, instruction: str = "보고서를 작성하라.") ->
     )
 
 
+TEST_COMPETENCY_IDS = ("C1", "C2")
+
+
+def ensure_competencies(db: Database, ids: tuple[str, ...] = TEST_COMPETENCY_IDS) -> None:
+    """Make sure the 역량 체계 has these competencies (``start`` rejects unknown ids).
+
+    Inserts a small competency with 2 sub-elements and 상·중·하 수준 지표 for each
+    missing id; existing rows (e.g. the seed data) are left untouched. Safe after
+    ``empty_repositories`` truncated the tables.
+    """
+    with db.connection() as conn:
+        for cid in ids:
+            conn.execute(
+                "INSERT INTO competencies (id, name, description) VALUES (%s, %s, %s) "
+                "ON CONFLICT (id) DO NOTHING",
+                (cid, f"테스트 역량 {cid}", "테스트용 역량"),
+            )
+            for pos in (1, 2):
+                sid = f"{cid}.{pos}"
+                conn.execute(
+                    "INSERT INTO competency_sub_elements (id, competency_id, position, name, description) "
+                    "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
+                    (sid, cid, pos, f"하위 요소 {sid}", ""),
+                )
+                for level in Level:
+                    conn.execute(
+                        "INSERT INTO level_indicators (sub_element_id, level, description) "
+                        "VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+                        (sid, level.value, f"{sid} {level.ko} 수준 행동"),
+                    )
+
+
 def seed_similar_tasks(
     db: Database, gateway: ModelGateway, settings: Settings, n: int = 3
 ) -> list[uuid.UUID]:
-    """Add ``n`` fresh tasks to the task DB so 유사 과제 검색 has something to find."""
+    """Add ``n`` fresh tasks to the task DB so 유사 과제 검색 has something to find.
+
+    Also ensures the test competencies exist (``ensure_competencies``).
+    """
+    ensure_competencies(db)
     repo = TaskRepository(db, gateway, settings)
     tag = uuid.uuid4().hex[:8]
     return [repo.add(make_task(f"[{tag}] 기존 과제 상황 {i}"), source="seed") for i in range(n)]
