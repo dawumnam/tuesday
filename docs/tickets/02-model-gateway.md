@@ -1,5 +1,5 @@
 ---
-status: open
+status: closed
 blocked-by: [01]
 ---
 # 02 Model gateway
