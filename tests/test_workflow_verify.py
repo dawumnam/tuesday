@@ -144,6 +144,10 @@ H, M, L = Level.HIGH, Level.MEDIUM, Level.LOW
                      id="high-graded-inconsistently"),
         pytest.param({H: 85, M: 60, L: [20, 30, 40]}, [FailureType.INCONSISTENT_GRADING],
                      id="low-graded-inconsistently"),
+        # sample standard deviation 6.0 (population 4.9) > 5
+        pytest.param({H: [79, 85, 91], M: 60, L: 30}, [FailureType.INCONSISTENT_GRADING],
+                     id="sample-stdev-over-5"),
+        pytest.param({H: [80, 85, 90], M: 60, L: 30}, [], id="sample-stdev-exactly-5"),
         pytest.param({H: [50, 60, 70], M: 55, L: 50},
                      [FailureType.UNSOLVABLE, FailureType.LOW_DISCRIMINATION,
                       FailureType.INCONSISTENT_GRADING], id="everything-fails"),

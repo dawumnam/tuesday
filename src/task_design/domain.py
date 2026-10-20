@@ -351,7 +351,7 @@ class MockExamResult(BaseModel):
     @property
     def score_stdev(self) -> float:
         totals = [g.total for g in self.gradings]
-        return statistics.pstdev(totals) if len(totals) > 1 else 0.0
+        return statistics.stdev(totals) if len(totals) > 1 else 0.0  # sample stdev
 
 
 class Verdict(BaseModel):
