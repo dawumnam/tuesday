@@ -79,10 +79,13 @@ def _competency_lines(input: DraftInput, competencies: Sequence[Competency]) -> 
     return "\n".join(lines)
 
 
-# 메모 words too generic to be a keyword term on their own.
+# 메모 words too generic to be a keyword term on their own: function words, and office
+# words that nearly every task's 상황/지시문 contains (a term matching every task would
+# put them all in the keyword ranking and crowd out real matches).
 _MEMO_STOPWORDS = frozenset(
     "그리고 그래서 관련 관련된 위한 위해 대한 대해 중심 중심으로 있는 하는 되는 같은 정도 수준 "
-    "과제 상황 내용 부분 좀 더 및 등 꼭 잘 많이 주세요 해주세요 합니다 있습니다".split()
+    "과제 상황 내용 부분 좀 더 및 등 꼭 잘 많이 주세요 해주세요 합니다 있습니다 "
+    "보고 보고서 작성 정리 검토 자료 업무 문서 결과 요약 활용 사용 담당 담당자 팀 회사".split()
 )
 _MEMO_WORD = re.compile(r"[0-9A-Za-z가-힣]+")
 MAX_MEMO_TERMS = 5
