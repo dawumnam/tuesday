@@ -464,3 +464,22 @@ def start_awaiting_review(
                          personas=personas)
     draft = start_awaiting_selection(service, fake, db, settings, author_id=author_id, input=input)
     return service.select_scenario(draft.id, draft.candidates[candidate_index].id)
+
+
+class BackgroundRunner:
+    """``run_graph`` that runs each job on its own thread, as the app does.
+
+    ``join`` waits for every job (call it before the test's DB closes).
+    """
+
+    def __init__(self) -> None:
+        self._threads: list[threading.Thread] = []
+
+    def __call__(self, job: Callable[[], None]) -> None:
+        thread = threading.Thread(target=job, daemon=True)
+        self._threads.append(thread)
+        thread.start()
+
+    def join(self, timeout: float = 10.0) -> None:
+        for thread in self._threads:
+            thread.join(timeout)

@@ -9,7 +9,6 @@ from __future__ import annotations
 import threading
 import time
 import uuid
-from collections.abc import Callable
 
 import pytest
 
@@ -38,13 +37,11 @@ from task_design.workflow.schemas import CandidateBatch
 TIMEOUT = 20.0
 
 
-def in_background(job: Callable[[], None]) -> None:
-    threading.Thread(target=job, daemon=True).start()
-
-
-def stepped_service(db, fake, settings, mode: StepMode) -> tuple[TaskDesignService, Stepper]:
+def stepped_service(
+    db, fake, settings, background, mode: StepMode
+) -> tuple[TaskDesignService, Stepper]:
     stepper = Stepper(default_mode=mode)
-    service = TaskDesignService(db, fake, settings, run_graph=in_background, observer=stepper)
+    service = TaskDesignService(db, fake, settings, run_graph=background, observer=stepper)
     return service, stepper
 
 
@@ -85,9 +82,9 @@ def open_transactions(db: Database) -> int:
 
 
 def test_step_mode_pauses_before_every_stage_and_next_releases_exactly_one(
-    db, fake_gateway, settings
+    db, fake_gateway, settings, background
 ):
-    service, stepper = stepped_service(db, fake_gateway, settings, StepMode.STEP)
+    service, stepper = stepped_service(db, fake_gateway, settings, background, StepMode.STEP)
     script = install_verification(fake_gateway)
     seed_similar_tasks(db, fake_gateway, settings)
     calls_before = len(fake_gateway.calls)
@@ -134,9 +131,9 @@ def test_step_mode_pauses_before_every_stage_and_next_releases_exactly_one(
 
 
 def test_pause_in_auto_mode_stops_at_the_next_stage_boundary_and_resume_continues(
-    db, fake_gateway, settings
+    db, fake_gateway, settings, background
 ):
-    service, stepper = stepped_service(db, fake_gateway, settings, StepMode.AUTO)
+    service, stepper = stepped_service(db, fake_gateway, settings, background, StepMode.AUTO)
     personas_started, release = threading.Event(), threading.Event()
 
     def hold(level: Level, call) -> None:
@@ -164,8 +161,10 @@ def test_pause_in_auto_mode_stops_at_the_next_stage_boundary_and_resume_continue
     wait_for_state(service, draft.id, DraftState.AWAITING_REVIEW)
 
 
-def test_switching_a_paused_draft_to_auto_runs_it_to_the_end(db, fake_gateway, settings):
-    service, stepper = stepped_service(db, fake_gateway, settings, StepMode.STEP)
+def test_switching_a_paused_draft_to_auto_runs_it_to_the_end(
+    db, fake_gateway, settings, background
+):
+    service, stepper = stepped_service(db, fake_gateway, settings, background, StepMode.STEP)
     install_verification(fake_gateway)
     seed_similar_tasks(db, fake_gateway, settings)
     draft = service.start(make_input(), author_id=1)
@@ -190,8 +189,10 @@ def test_auto_mode_observer_leaves_an_inline_run_unchanged(db, fake_gateway, set
 # --- 유사 과제 검색 · 중복 검사 traces --------------------------------------------------
 
 
-def test_search_trace_explains_how_the_similar_tasks_were_found(db, fake_gateway, settings):
-    service, stepper = stepped_service(db, fake_gateway, settings, StepMode.STEP)
+def test_search_trace_explains_how_the_similar_tasks_were_found(
+    db, fake_gateway, settings, background
+):
+    service, stepper = stepped_service(db, fake_gateway, settings, background, StepMode.STEP)
     seed_similar_tasks(db, fake_gateway, settings)
     fake_gateway.respond_with(Role.GENERATION, by_schema({CandidateBatch: ScenarioWriter()}))
     draft = service.start(make_input(), author_id=1)
@@ -225,7 +226,7 @@ def test_search_trace_explains_how_the_similar_tasks_were_found(db, fake_gateway
 
 
 def test_duplicate_check_trace_shows_rejected_and_accepted_candidates(
-    db, fake_gateway, settings
+    db, fake_gateway, settings, background
 ):
     existing = f"기존 과제 {uuid.uuid4().hex}"
     near_copy = f"거의 같은 상황 {uuid.uuid4().hex}"
@@ -238,7 +239,7 @@ def test_duplicate_check_trace_shows_rejected_and_accepted_candidates(
     fake_gateway.script(Role.GENERATION, scripted_batch(near_copy, "후보 A " + uuid.uuid4().hex,
                                                         "후보 B " + uuid.uuid4().hex))
     fake_gateway.respond_with(Role.GENERATION, writer)
-    service, stepper = stepped_service(db, fake_gateway, settings, StepMode.AUTO)
+    service, stepper = stepped_service(db, fake_gateway, settings, background, StepMode.AUTO)
 
     draft = service.start(make_input(), author_id=1)
     draft = wait_for_state(service, draft.id, DraftState.AWAITING_SCENARIO_SELECTION)

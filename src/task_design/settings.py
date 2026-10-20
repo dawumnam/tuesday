@@ -13,6 +13,7 @@ nested fields use ``__``. Examples::
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -121,6 +122,10 @@ class Settings(BaseSettings):
     # model id → price; unknown models are recorded at cost 0.
     prices: dict[str, ModelPrice] = dict(DEFAULT_PRICES)
     gemini_api_key: str | None = None  # TD_GEMINI_API_KEY; falls back to GEMINI_API_KEY
+
+    # 데모 모드 (TD_FAKE_GATEWAY=1) only: how a new draft's run proceeds on the 진행 screen.
+    # "step" = 단계별 진행 (pauses before every stage), "auto" = 자동 진행.
+    demo_step_mode: Literal["step", "auto"] = "step"
 
     langfuse_host: str = "http://localhost:3300"
     langfuse_public_key: str | None = None

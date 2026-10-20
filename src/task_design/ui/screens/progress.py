@@ -9,6 +9,8 @@ from __future__ import annotations
 import streamlit as st
 
 from task_design.domain import Draft, DraftState, PersonaStatus, Stage
+from task_design.stepper import Stepper
+from task_design.ui.screens import stepping
 from task_design.ui.screens.common import LEVELS, show_task, verdict_line
 
 POLL_SECONDS = 2.0
@@ -20,16 +22,19 @@ _PERSONA_ICON = {PersonaStatus.PENDING: "⏸️", PersonaStatus.RUNNING: "✍️
                  PersonaStatus.DONE: "✅"}
 
 
-def render(service, draft: Draft) -> None:
+def render(service, draft: Draft, *, stepper: Stepper | None = None) -> None:
     st.caption("이 화면을 닫아도 실행은 서버에서 계속됩니다. 나중에 '초안 목록'에서 다시 열 수 있습니다.")
-    _live(service, draft.id, draft.state, draft.error)
+    _live(service, draft.id, draft.state, draft.error, stepper)
 
 
 @st.fragment(run_every=POLL_SECONDS)
-def _live(service, draft_id, shown_state: DraftState, shown_error: str | None) -> None:
+def _live(service, draft_id, shown_state: DraftState, shown_error: str | None,
+          stepper: Stepper | None) -> None:
     draft = service.get_draft(draft_id)
     if draft.state is not shown_state or draft.error != shown_error:
         st.rerun(scope="app")  # another screen takes over (후보 선택, 검토, 오류)
+    if stepper is not None:  # 데모 모드: 단계별 진행 / 자동 진행
+        stepping.controls(stepper, draft)
     show_progress(draft)
 
 

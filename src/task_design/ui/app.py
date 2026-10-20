@@ -81,7 +81,8 @@ if page == PAGE_NEW:
 elif page == PAGE_LIST:
     drafts.render_list(service, staff_id=staff_id, staff=staff)
 elif page == PAGE_DRAFT:
-    shown = drafts.render_draft(service, ss.get("draft_id"), staff_id=staff_id, staff=staff)
+    shown = drafts.render_draft(service, ss.get("draft_id"), staff_id=staff_id, staff=staff,
+                                stepper=rt.stepper)
     context = shown.id if shown is not None else None
 elif page == PAGE_DASHBOARD:
     dashboard.render(service)

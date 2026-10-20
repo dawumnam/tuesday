@@ -7,6 +7,8 @@ from uuid import UUID
 import streamlit as st
 
 from task_design.domain import Draft, DraftState, DraftSummary, Task
+from task_design.service import DraftNotFound
+from task_design.stepper import Stepper
 from task_design.ui.screens import candidates, progress, review
 from task_design.ui.screens.common import (
     PAGE_DRAFT,
@@ -18,7 +20,6 @@ from task_design.ui.screens.common import (
     show_task,
     staff_name,
 )
-from task_design.service import DraftNotFound
 from task_design.ui.texts import run_error_text
 
 
@@ -70,7 +71,8 @@ def _row(d: DraftSummary, staff: dict[int, str], *, prefix: str) -> None:
         c3.button("열기", key=f"{prefix}-open-{d.id}", on_click=go_callback(PAGE_DRAFT, d.id))
 
 
-def render_draft(service, draft_id: str | None, *, staff_id: int, staff: dict[int, str]) -> Draft | None:
+def render_draft(service, draft_id: str | None, *, staff_id: int, staff: dict[int, str],
+                 stepper: Stepper | None = None) -> Draft | None:
     if not draft_id:
         st.info("열린 초안이 없습니다. '초안 목록'에서 초안을 고르거나 새 초안을 만드세요.")
         return None
@@ -99,9 +101,9 @@ def render_draft(service, draft_id: str | None, *, staff_id: int, staff: dict[in
 
     match draft.state:
         case DraftState.GENERATING | DraftState.VERIFYING:
-            progress.render(service, draft)
+            progress.render(service, draft, stepper=stepper)
         case DraftState.AWAITING_SCENARIO_SELECTION:
-            candidates.render(service, draft)
+            candidates.render(service, draft, stepper=stepper)
         case DraftState.AWAITING_REVIEW:
             review.render(service, draft, staff_id=staff_id, staff=staff)
         case DraftState.CONFIRMED | DraftState.REJECTED:

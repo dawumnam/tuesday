@@ -9,13 +9,17 @@ import pandas as pd
 import streamlit as st
 
 from task_design.domain import (
+    Attachment,
+    ChatTurn,
     Draft,
     DraftRound,
     DraftState,
     FailureReport,
     Level,
     MockExamResult,
+    Rubric,
     Task,
+    Verdict,
 )
 from task_design.ui.texts import error_text
 
@@ -82,9 +86,13 @@ def show_task(task: Task, *, key: str) -> None:
 
 def show_attachments(task: Task) -> None:
     st.markdown("#### 첨부 자료")
-    if not task.attachments:
+    show_attachment_list(task.attachments)
+
+
+def show_attachment_list(attachments: list[Attachment]) -> None:
+    if not attachments:
         st.caption("첨부 자료 없음")
-    for a in task.attachments:
+    for a in attachments:
         with st.expander(f"📎 {a.filename} ({a.format.ko}) · 함정 {len(a.traps)}개"):
             st.code(a.content, language=None, wrap_lines=True)
             for t in a.traps:
@@ -92,10 +100,14 @@ def show_attachments(task: Task) -> None:
 
 
 def rubric_frame(task: Task) -> pd.DataFrame:
+    return rubric_items_frame(task.rubric)
+
+
+def rubric_items_frame(rubric: Rubric) -> pd.DataFrame:
     return pd.DataFrame([{
         "항목": i.title, "유형": i.type.ko, "역량": i.competency_id, "배점": i.points,
         "0점": i.criteria_zero, "부분 점수": i.criteria_partial, "만점": i.criteria_full,
-    } for i in task.rubric.items])
+    } for i in rubric.items])
 
 
 # --- 검증 근거 --------------------------------------------------------------------
@@ -126,9 +138,10 @@ def round_(x: float) -> float:
 
 
 def verdict_line(round: DraftRound) -> str:
-    v = round.verdict
-    if v is None:
-        return "판정 전"
+    return "판정 전" if round.verdict is None else verdict_text(round.verdict)
+
+
+def verdict_text(v: Verdict) -> str:
     return (f"풀이 가능성 {_mark(v.solvable)} · 변별력 {_mark(v.discriminating)} · "
             f"채점 일관성 {_mark(v.consistent)}"
             + (f" — 실패: {', '.join(f.ko for f in v.failures)}" if v.failures else " — 통과"))
@@ -190,15 +203,19 @@ def show_submission(result: MockExamResult, *, key: str) -> None:
     label = (f"{result.persona_level.ko} 수준 페르소나 · 평균 {round_(result.mean_score)}점 · "
              f"대화 {sum(t.speaker == 'examinee' for t in result.transcript)}회")
     with st.expander(label):
-        st.markdown("**AI 도구 대화 기록**")
-        for turn in result.transcript:
-            who = "응시자" if turn.speaker == "examinee" else "AI 도구"
-            with st.chat_message("user" if turn.speaker == "examinee" else "assistant"):
-                st.caption(who)
-                st.write(turn.content)
+        show_transcript(result.transcript)
         st.markdown("**최종 산출물**")
         st.write(result.output)
         st.markdown("**채점 근거**")
         rows = [{"채점": f"{n}회", "항목": s.item_index + 1, "점수": s.score, "근거": s.rationale}
                 for n, g in enumerate(result.gradings, start=1) for s in g.item_scores]
         st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch", key=f"{key}-gr")
+
+
+def show_transcript(transcript: list[ChatTurn]) -> None:
+    st.markdown("**AI 도구 대화 기록**")
+    for turn in transcript:
+        who = "응시자" if turn.speaker == "examinee" else "AI 도구"
+        with st.chat_message("user" if turn.speaker == "examinee" else "assistant"):
+            st.caption(who)
+            st.write(turn.content)

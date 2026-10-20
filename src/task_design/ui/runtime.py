@@ -8,7 +8,9 @@ Environment:
 - ``TD_FAKE_GATEWAY=1``: 데모 모드. ``task_design.demo`` answers every model call
   offline with Korean demo content; the seed 역량 체계 and 과제 are loaded if the DB
   has no competencies yet. ``TD_FAKE_DELAY`` (seconds per model call, default 0.6)
-  keeps progress watchable.
+  keeps progress watchable. A ``Stepper`` is installed as the run observer:
+  the 진행 screen offers 단계별 진행 / 자동 진행 (``TD_DEMO_STEP_MODE=step|auto``,
+  default step) and shows how 유사 과제 검색 and 중복 검사 reached their result.
 - otherwise the real gateway: ``build_gateway(settings, usage_sink=CostStore(db))``.
 
 Tests call ``use_service`` to run the app script against their own service.
@@ -29,6 +31,7 @@ from task_design.db import Database
 from task_design.migrate import apply_migrations
 from task_design.service import TaskDesignService
 from task_design.settings import Settings
+from task_design.stepper import Stepper
 
 log = logging.getLogger(__name__)
 
@@ -41,15 +44,20 @@ class StartupError(RuntimeError):
 class AppRuntime:
     service: TaskDesignService
     demo: bool
+    stepper: Stepper | None = None  # 데모 모드 단계별 진행 (None in real mode)
 
 
 _override: AppRuntime | None = None
 
 
-def use_service(service: TaskDesignService | None, *, demo: bool = False) -> None:
-    """Run the app against ``service`` (tests); ``None`` goes back to the real one."""
+def use_service(
+    service: TaskDesignService | None, *, demo: bool = False, stepper: Stepper | None = None
+) -> None:
+    """Run the app against ``service`` (tests); ``None`` goes back to the real one.
+
+    ``stepper`` must be the observer ``service`` was built with."""
     global _override
-    _override = AppRuntime(service, demo) if service is not None else None
+    _override = AppRuntime(service, demo, stepper) if service is not None else None
 
 
 def get() -> AppRuntime:
@@ -90,6 +98,7 @@ def _build() -> AppRuntime:
         ) from e
 
     demo = _truthy("TD_FAKE_GATEWAY")
+    stepper = None
     if demo:
         from task_design.cli import DEFAULT_SEED_DIR
         from task_design.demo import build_demo_gateway
@@ -102,6 +111,7 @@ def _build() -> AppRuntime:
         )
         if not CompetencyRepository(db).list():
             load_dataset(DEFAULT_SEED_DIR, db, gateway, settings)
+        stepper = Stepper(default_mode=settings.demo_step_mode)
     else:
         from task_design.model_gateway import build_gateway
 
@@ -114,9 +124,11 @@ def _build() -> AppRuntime:
                 "데모 모드를 켜세요."
             ) from e
 
-    executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="draft-run")
-    service = TaskDesignService(db, gateway, settings, run_graph=_background(executor))
+    # A run paused by the 데모 모드 stepper keeps its worker thread, hence more workers.
+    executor = ThreadPoolExecutor(max_workers=32 if demo else 8, thread_name_prefix="draft-run")
+    service = TaskDesignService(db, gateway, settings, run_graph=_background(executor),
+                                observer=stepper)
     interrupted = service.recover_interrupted_runs()
     if interrupted:
         log.warning("marked %d interrupted draft runs for retry", len(interrupted))
-    return AppRuntime(service, demo)
+    return AppRuntime(service, demo, stepper)

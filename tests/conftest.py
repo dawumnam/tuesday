@@ -16,6 +16,7 @@ from task_design.service import TaskDesignService
 from task_design.settings import Settings
 from task_design.testing.database import fresh_database
 from task_design.testing.fake_gateway import FakeGateway
+from task_design.testing.workflow import BackgroundRunner
 
 
 @pytest.fixture(scope="session")
@@ -60,3 +61,11 @@ def fake_gateway(settings: Settings) -> FakeGateway:
 @pytest.fixture
 def service(db: Database, fake_gateway: FakeGateway, settings: Settings) -> TaskDesignService:
     return TaskDesignService(db=db, gateway=fake_gateway, settings=settings)
+
+
+@pytest.fixture
+def background(db: Database) -> Iterator[BackgroundRunner]:
+    """A threaded ``run_graph``; its jobs are joined before ``db`` closes."""
+    runner = BackgroundRunner()
+    yield runner
+    runner.join()
