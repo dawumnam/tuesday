@@ -7,12 +7,13 @@ Use the helpers below to get domain objects back.
 
 from __future__ import annotations
 
+import operator
 from dataclasses import dataclass
-from typing import Any, Literal, TypedDict
+from typing import Annotated, Any, Literal, TypedDict
 from uuid import UUID
 
 from task_design.db import Database
-from task_design.domain import DraftInput, ScenarioCandidate, Task
+from task_design.domain import DraftInput, ScenarioCandidate, Task, Verdict
 from task_design.gateway import ModelGateway
 from task_design.repositories import CompetencyRepository, TaskRepository
 from task_design.settings import Settings
@@ -28,6 +29,48 @@ class WorkflowState(TypedDict, total=False):
     selection: Literal["regenerate", "select"]  # the human's last decision
     selected_candidate_id: str
 
+    # --- 생성 (ticket 06) ---
+    scenario: str  # the chosen 상황 (never changed after selection)
+    instruction: str
+    attachments: list[dict[str, Any]]  # list[Attachment]
+    rubric: dict[str, Any]  # Rubric
+    review_findings: dict[str, Any]  # schemas.ReviewFindings
+    task: dict[str, Any]  # Task: the current content the 모의 응시 runs on
+
+    # --- 회차 / 모의 응시 / 판정 ---
+    # The round being verified. Round 1 = initial generation. Ticket 07's fix
+    # nodes update ``task``, bump ``round`` and set ``round_changes`` before
+    # re-entering START_MOCK_EXAM.
+    round: int
+    round_changes: dict[str, Any]  # {"components": [Component values], "reason": str}
+    # Fan-in from the parallel persona / grading nodes. Append-only across
+    # rounds; every entry carries its "round", so read them with round_entries().
+    submissions: Annotated[list[dict[str, Any]], operator.add]
+    gradings: Annotated[list[dict[str, Any]], operator.add]
+    verdict: dict[str, Any]  # Verdict of the latest verified round
+
+
+class PersonaJob(TypedDict):
+    """Input of one parallel persona run (sent via ``Send``)."""
+
+    draft_id: str
+    input: dict[str, Any]
+    task: dict[str, Any]
+    round: int
+    level: str  # Level value
+
+
+class GradingJob(TypedDict):
+    """Input of one independent grading (sent via ``Send``)."""
+
+    draft_id: str
+    task: dict[str, Any]
+    round: int
+    level: str  # Level value of the graded persona
+    index: int  # 0..gradings_per_submission-1
+    transcript: list[dict[str, Any]]  # list[ChatTurn]
+    output: str
+
 
 @dataclass(frozen=True)
 class Deps:
@@ -39,11 +82,11 @@ class Deps:
     competencies: CompetencyRepository
 
 
-def draft_id(state: WorkflowState) -> UUID:
+def draft_id(state: WorkflowState | PersonaJob | GradingJob) -> UUID:
     return UUID(state["draft_id"])
 
 
-def draft_input(state: WorkflowState) -> DraftInput:
+def draft_input(state: WorkflowState | PersonaJob) -> DraftInput:
     return DraftInput.model_validate(state["input"])
 
 
@@ -53,6 +96,23 @@ def similar_tasks(state: WorkflowState) -> list[Task]:
 
 def candidates(state: WorkflowState) -> list[ScenarioCandidate]:
     return [ScenarioCandidate.model_validate(c) for c in state.get("candidates", [])]
+
+
+def task(state: WorkflowState | PersonaJob | GradingJob) -> Task:
+    return Task.model_validate(state["task"])
+
+
+def verdict(state: WorkflowState) -> Verdict | None:
+    return Verdict.model_validate(state["verdict"]) if state.get("verdict") else None
+
+
+def round_entries(entries: list[dict[str, Any]], round: int, *key: str) -> list[dict[str, Any]]:
+    """Entries of ``round``, de-duplicated by the ``key`` fields (last write wins)."""
+    out: dict[tuple, dict[str, Any]] = {}
+    for e in entries:
+        if e["round"] == round:
+            out[tuple(e[k] for k in key)] = e
+    return list(out.values())
 
 
 def dump(model: Any) -> dict[str, Any]:

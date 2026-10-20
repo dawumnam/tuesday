@@ -15,7 +15,11 @@ from task_design.db import Database
 from task_design.domain import (
     Draft,
     DraftInput,
+    DraftRound,
     DraftState,
+    FailureReport,
+    Level,
+    PersonaStatus,
     ScenarioCandidate,
     Stage,
     Task,
@@ -23,10 +27,13 @@ from task_design.domain import (
 
 _COLUMNS = (
     "id, author_id, input, state, stage, similar_tasks, candidates, "
-    "selected_candidate_id, error, created_at, updated_at"
+    "selected_candidate_id, error, created_at, updated_at, "
+    "task, rounds, persona_status, failure_report"
 )
 _TASKS = TypeAdapter(list[Task])
 _CANDIDATES = TypeAdapter(list[ScenarioCandidate])
+_ROUNDS = TypeAdapter(list[DraftRound])
+_PERSONA_STATUS = TypeAdapter(dict[Level, PersonaStatus])
 
 
 class DraftNotFound(LookupError):
@@ -64,7 +71,7 @@ class DraftStore:
         if row is None:
             raise DraftNotFound(f"no draft {draft_id}")
         (id_, author, input_, state, stage, similar, candidates, selected, error, created,
-         updated) = row
+         updated, task, rounds, persona_status, failure_report) = row
         return Draft(
             id=id_,
             author_id=author,
@@ -75,6 +82,12 @@ class DraftStore:
             candidates=_CANDIDATES.validate_python(candidates),
             selected_candidate_id=selected,
             error=error,
+            task=Task.model_validate(task) if task is not None else None,
+            rounds=_ROUNDS.validate_python(rounds),
+            persona_status=_PERSONA_STATUS.validate_python(persona_status),
+            failure_report=(
+                FailureReport.model_validate(failure_report) if failure_report is not None else None
+            ),
             created_at=created,
             updated_at=updated,
         )
@@ -136,9 +149,48 @@ class DraftStore:
     def set_candidates(self, draft_id: UUID, candidates: list[ScenarioCandidate]) -> None:
         self._update(draft_id, "candidates = %s", _dump(_CANDIDATES, candidates))
 
+    def set_task(self, draft_id: UUID, task: Task) -> None:
+        self._update(draft_id, "task = %s", task.model_dump_json())
+
+    def save_round(self, draft_id: UUID, round: DraftRound) -> None:
+        """Insert or replace (by ``number``) one 초안 회차; rounds stay ordered by number."""
+        with self._db.connection() as conn:
+            row = conn.execute(
+                "SELECT rounds FROM drafts WHERE id = %s FOR UPDATE", (draft_id,)
+            ).fetchone()
+            if row is None:
+                raise DraftNotFound(f"no draft {draft_id}")
+            rounds = [r for r in _ROUNDS.validate_python(row[0]) if r.number != round.number]
+            rounds = sorted([*rounds, round], key=lambda r: r.number)
+            conn.execute(
+                "UPDATE drafts SET rounds = %s, updated_at = now() WHERE id = %s",
+                (_dump(_ROUNDS, rounds), draft_id),
+            )
+
+    def reset_persona_status(self, draft_id: UUID) -> None:
+        """All three personas → 대기 (start of a round's 모의 응시)."""
+        self._update(
+            draft_id, "persona_status = %s",
+            _dump(_PERSONA_STATUS, dict.fromkeys(Level, PersonaStatus.PENDING)),
+        )
+
+    def set_persona_status(self, draft_id: UUID, level: Level, status: PersonaStatus) -> None:
+        """Update one persona's status; atomic, so parallel personas don't clobber each other."""
+        self._update(
+            draft_id, "persona_status = persona_status || jsonb_build_object(%s::text, %s::text)",
+            (level.value, status.value),
+        )
+
+    def set_failure_report(self, draft_id: UUID, report: FailureReport | None) -> None:
+        self._update(
+            draft_id, "failure_report = %s", report.model_dump_json() if report else None
+        )
+
     def _update(self, draft_id: UUID, assignment: str, value: object) -> None:
+        """``value``: one parameter, or a tuple for an assignment with several."""
+        params = value if isinstance(value, tuple) else (value,)
         with self._db.connection() as conn:
             conn.execute(
                 f"UPDATE drafts SET {assignment}, updated_at = now() WHERE id = %s",
-                (value, draft_id),
+                (*params, draft_id),
             )

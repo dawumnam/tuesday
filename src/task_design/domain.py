@@ -88,6 +88,21 @@ class Stage(_KoEnum):
 
     SEARCHING_SIMILAR_TASKS = "searching_similar_tasks"
     GENERATING_CANDIDATES = "generating_candidates"
+    WRITING_INSTRUCTION = "writing_instruction"
+    WRITING_ATTACHMENTS = "writing_attachments"
+    WRITING_RUBRIC = "writing_rubric"
+    REVIEWING = "reviewing"
+    MOCK_EXAM = "mock_exam"
+    GRADING = "grading"
+    JUDGING = "judging"
+
+
+class PersonaStatus(_KoEnum):
+    """Progress of one 응시자 페르소나 in the current round's 모의 응시 (``Draft.persona_status``)."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    DONE = "done"
 
 
 class IntervalKind(_KoEnum):
@@ -125,6 +140,16 @@ _KO: dict[StrEnum, str] = {
     FailureType.INCONSISTENT_GRADING: "채점 불일치",
     Stage.SEARCHING_SIMILAR_TASKS: "유사 과제 검색",
     Stage.GENERATING_CANDIDATES: "상황 후보 생성",
+    Stage.WRITING_INSTRUCTION: "지시문 작성",
+    Stage.WRITING_ATTACHMENTS: "첨부 자료 작성",
+    Stage.WRITING_RUBRIC: "채점 기준 작성",
+    Stage.REVIEWING: "검토 에이전트 점검",
+    Stage.MOCK_EXAM: "모의 응시",
+    Stage.GRADING: "채점",
+    Stage.JUDGING: "판정",
+    PersonaStatus.PENDING: "대기",
+    PersonaStatus.RUNNING: "응시 중",
+    PersonaStatus.DONE: "제출 완료",
     IntervalKind.HUMAN_ACTIVE: "사람 활성",
     IntervalKind.AGENT_RUN: "에이전트 실행",
 }
@@ -383,8 +408,10 @@ class Draft(BaseModel):
     similar_tasks: list[Task] = Field(default_factory=list)  # 유사 과제 the candidates drew on
     candidates: list[ScenarioCandidate] = Field(default_factory=list)
     selected_candidate_id: UUID | None = None
-    task: Task | None = None
+    task: Task | None = None  # current content (set once 지시문·첨부 자료·채점 기준 exist)
     rounds: list[DraftRound] = Field(default_factory=list)
+    # 상·중·하 persona progress in the current round's 모의 응시 (empty before the first one)
+    persona_status: dict[Level, PersonaStatus] = Field(default_factory=dict)
     failure_report: FailureReport | None = None
     review: Review | None = None
     error: str | None = None  # last workflow failure, if the run crashed
