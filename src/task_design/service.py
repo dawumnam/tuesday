@@ -32,7 +32,31 @@ from task_design.gateway import ModelGateway
 from task_design.measurement import MeasurementStore, compute_metrics
 from task_design.repositories import CompetencyRepository, TaskRepository
 from task_design.settings import Settings
-from task_design.workflow import Deps, DraftStore, Workflow
+from task_design.workflow import (
+    Deps,
+    DraftNotFound,
+    DraftStore,
+    InvalidDraftState,
+    UnknownCandidate,
+    Workflow,
+)
+
+# Every exception the service raises (messages are Korean, meant for the user).
+__all__ = [
+    "INTERRUPTED_RUN_ERROR",
+    "DraftNotFound",
+    "InvalidActivityInterval",
+    "InvalidDraftInput",
+    "InvalidDraftState",
+    "InvalidEditedTask",
+    "InvalidPeriod",
+    "InvalidReviewLabels",
+    "SelfReview",
+    "TaskDesignService",
+    "UnknownCandidate",
+    "UnknownCompetency",
+    "UnknownStaff",
+]
 
 # Runs one unit of graph work. Default: inline (blocking). The UI (ticket 10)
 # passes e.g. ``executor.submit`` so start/regenerate return immediately and
@@ -48,7 +72,7 @@ def _run_inline(job: Callable[[], None]) -> None:
 
 
 # Draft.error of a run cut off by a restart (see ``recover_interrupted_runs``).
-INTERRUPTED_RUN_ERROR = "Interrupted: 앱이 다시 시작되어 진행 중이던 실행이 중단되었습니다."
+INTERRUPTED_RUN_ERROR = "앱이 다시 시작되어 진행 중이던 실행이 중단되었습니다."
 
 
 class InvalidDraftInput(ValueError):

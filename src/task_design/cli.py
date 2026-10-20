@@ -86,7 +86,8 @@ def _print_item(total: int) -> Callable[[BatchItem], None]:
                 note += f", 실패 리포트: {fails}"
             print(f"[{item.index}/{total}] {d.id} {d.state.ko} ({note}) {what}", flush=True)
         else:
-            print(f"[{item.index}/{total}] {d.id} 실패 ({d.state.ko}): {d.error} {what}",
+            kind = d.error_kind.ko if d.error_kind else "오류"
+            print(f"[{item.index}/{total}] {d.id} 실패 ({d.state.ko}, {kind}): {d.error} {what}",
                   flush=True)
     return show
 

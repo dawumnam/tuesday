@@ -127,7 +127,7 @@ def test_failed_run_shows_korean_message_and_retries(demo, db, settings):
     assert any("중단" in e.value for e in at.error)
     assert any(e.label.startswith("오류 상세") for e in at.expander)
 
-    button(at, "재시도").click().run()
+    button(at, "다시 실행").click().run()
 
     assert not at.exception
     assert demo.get_draft(draft.id).state is DraftState.AWAITING_REVIEW

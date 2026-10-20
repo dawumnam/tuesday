@@ -19,7 +19,12 @@ from task_design.domain import (
     Stage,
 )
 from task_design.gateway import Role
-from task_design.service import TaskDesignService, UnknownCompetency
+from task_design.service import (
+    InvalidDraftState,
+    TaskDesignService,
+    UnknownCandidate,
+    UnknownCompetency,
+)
 from task_design.testing.workflow import (
     Grader,
     Personas,
@@ -29,7 +34,6 @@ from task_design.testing.workflow import (
     start_awaiting_selection,
     submission_level,
 )
-from task_design.workflow import InvalidDraftState, UnknownCandidate
 
 
 def test_start_rejects_competencies_not_in_the_framework(service, fake_gateway):

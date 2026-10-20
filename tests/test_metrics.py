@@ -12,6 +12,7 @@ import pytest
 from task_design.costs import CostStore
 from task_design.domain import Component, DraftState, Interval, ReviewDecision, ReviewLabel
 from task_design.service import (
+    DraftNotFound,
     InvalidActivityInterval,
     InvalidPeriod,
     TaskDesignService,
@@ -27,7 +28,6 @@ from task_design.testing.workflow import (
     start_awaiting_review,
     start_awaiting_selection,
 )
-from task_design.workflow import DraftNotFound
 
 AUTHOR, REVIEWER = 1, 2
 

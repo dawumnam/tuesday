@@ -12,7 +12,12 @@ from task_design.db import Database
 from task_design.domain import DraftErrorKind, DraftState, Stage
 from task_design.gateway import Role
 from task_design.repositories import TaskRepository
-from task_design.service import InvalidDraftInput, TaskDesignService
+from task_design.service import (
+    DraftNotFound,
+    InvalidDraftInput,
+    InvalidDraftState,
+    TaskDesignService,
+)
 from task_design.testing.workflow import (
     ScenarioWriter,
     ensure_competencies,
@@ -22,7 +27,6 @@ from task_design.testing.workflow import (
     seed_similar_tasks,
     start_awaiting_selection,
 )
-from task_design.workflow import DraftNotFound, InvalidDraftState
 
 
 def random_unit(dim: int) -> list[float]:

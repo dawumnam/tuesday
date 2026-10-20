@@ -1,7 +1,7 @@
 """Runs cut off by an app restart (the background job died with the process).
 
 On start-up the app calls ``recover_interrupted_runs``: drafts left in 생성 중 / 검증 중
-without an error get one, so the 재시도 button can pick them up again.
+without an error get one, so the 다시 실행 button can pick them up again.
 """
 
 from __future__ import annotations
@@ -11,13 +11,11 @@ from task_design.gateway import Role
 from task_design.service import TaskDesignService
 from task_design.testing.workflow import (
     ScenarioWriter,
-    by_schema,
     install_verification,
     make_input,
     seed_similar_tasks,
     start_awaiting_selection,
 )
-from task_design.workflow.schemas import CandidateBatch
 
 
 def _dropping_service(db, gateway, settings):
@@ -27,7 +25,7 @@ def _dropping_service(db, gateway, settings):
 
 def test_a_start_cut_off_by_a_restart_can_be_retried(db, fake_gateway, settings, service):
     seed_similar_tasks(db, fake_gateway, settings)
-    fake_gateway.respond_with(Role.GENERATION, by_schema({CandidateBatch: ScenarioWriter()}))
+    fake_gateway.respond_with(Role.GENERATION, ScenarioWriter())
     stuck = _dropping_service(db, fake_gateway, settings).start(make_input(), author_id=1)
     assert stuck.state is DraftState.GENERATING and stuck.error is None
 

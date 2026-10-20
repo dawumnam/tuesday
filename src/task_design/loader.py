@@ -50,7 +50,7 @@ Either file may be absent. Competencies are upserted by id (their sub-elements a
 indicators are replaced). Tasks are upserted by id with ``source='seed'``, and each
 one is embedded through the gateway. Every competency id a task references (in
 ``competency_ids`` or a rubric item) must exist after the competency file is loaded,
-or nothing from ``tasks.json`` is written and ``ValueError`` is raised.
+or nothing from ``tasks.json`` is written and ``UnknownTaskCompetency`` is raised.
 """
 
 from __future__ import annotations
@@ -71,6 +71,17 @@ TASKS_FILE = "tasks.json"
 
 _competencies = TypeAdapter(list[Competency])
 _tasks = TypeAdapter(list[Task])
+
+
+class UnknownTaskCompetency(ValueError):
+    """tasks.json references a competency id that is not in the 역량 체계.
+
+    The message is Korean; ``competency_ids`` lists the unknown ids.
+    """
+
+    def __init__(self, competency_ids: list[str]) -> None:
+        super().__init__(f"과제가 역량 체계에 없는 역량을 참조합니다: {', '.join(competency_ids)}")
+        self.competency_ids = competency_ids
 
 
 def load_dataset(
@@ -113,7 +124,7 @@ def load_dataset(
         {cid for t in tasks for cid in _referenced_competencies(t)} - known
     )
     if unknown:
-        raise ValueError(f"tasks reference unknown competencies: {', '.join(unknown)}")
+        raise UnknownTaskCompetency(unknown)
 
     repo = TaskRepository(db, gateway, settings)
     for t in tasks:

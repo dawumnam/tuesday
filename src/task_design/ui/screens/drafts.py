@@ -6,7 +6,7 @@ from uuid import UUID
 
 import streamlit as st
 
-from task_design.domain import Draft, DraftState, DraftSummary
+from task_design.domain import Draft, DraftState, DraftSummary, Task
 from task_design.ui.screens import candidates, progress, review
 from task_design.ui.screens.common import (
     PAGE_DRAFT,
@@ -18,8 +18,8 @@ from task_design.ui.screens.common import (
     show_task,
     staff_name,
 )
+from task_design.service import DraftNotFound
 from task_design.ui.texts import run_error_text
-from task_design.workflow import DraftNotFound
 
 
 def render_list(service, *, staff_id: int, staff: dict[int, str]) -> None:
@@ -110,8 +110,8 @@ def render_draft(service, draft_id: str | None, *, staff_id: int, staff: dict[in
 
 
 def _error_panel(service, draft: Draft) -> None:
-    st.error(run_error_text(draft.error), icon="⚠️")
-    if st.button("재시도", key=f"retry-{draft.id}", type="primary"):
+    st.error(run_error_text(draft.error_kind), icon="⚠️")
+    if st.button("다시 실행", key=f"retry-{draft.id}", type="primary"):
         if call(service.retry, draft.id) is not None:
             st.rerun()
     with st.expander("오류 상세 (개발자용)"):
@@ -127,11 +127,16 @@ def _reviewed(draft: Draft, staff: dict[int, str]) -> None:
         box(f"{rv.decision.ko} · 검토자 {staff_name(staff, rv.reviewer_id)} · {when}\n\n검토 라벨: {labels}")
         if draft.state is DraftState.CONFIRMED:
             st.caption("확정 과제는 과제 DB에 들어가 이후 유사 과제 검색에 쓰입니다.")
-    task = (rv.edited_task if rv and rv.edited_task else None) or draft.task
+    edited = rv.edited_task if rv else None
     left, right = st.columns([3, 2], gap="large")
     with left:
-        if rv and rv.edited_task:
+        if isinstance(edited, Task):
             st.caption("검토자가 수정한 과제입니다.")
-        show_task(task, key=f"final-{draft.id}")
+            show_task(edited, key=f"final-{draft.id}")
+        else:
+            show_task(draft.task, key=f"final-{draft.id}")
+        if isinstance(edited, dict):
+            with st.expander("검토자가 남긴 수정본 (과제 형식에 맞지 않아 그대로 보관)"):
+                st.json(edited)
     with right:
         show_evidence(draft, key=f"ev-{draft.id}")

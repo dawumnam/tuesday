@@ -8,7 +8,7 @@ import uuid
 import pytest
 
 from task_design.domain import Level
-from task_design.loader import load_dataset
+from task_design.loader import UnknownTaskCompetency, load_dataset
 from task_design.repositories import CompetencyRepository, TaskRepository
 
 
@@ -124,5 +124,6 @@ def test_loading_twice_is_idempotent(dataset, db, fake_gateway, settings):
 def test_task_with_unknown_competency_is_rejected(tmp_path, db, fake_gateway, settings):
     (tmp_path / "competencies.json").write_text("[]")
     (tmp_path / "tasks.json").write_text(json.dumps([_task("UNKNOWN", "상황")]))
-    with pytest.raises(ValueError, match="UNKNOWN"):
+    with pytest.raises(UnknownTaskCompetency) as raised:
         load_dataset(tmp_path, db, fake_gateway, settings)
+    assert raised.value.competency_ids == ["UNKNOWN"]

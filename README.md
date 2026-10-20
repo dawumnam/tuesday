@@ -75,7 +75,7 @@ uv run streamlit run src/task_design/ui/app.py
 
 API 키 없이 둘러보기(데모 모드): `make db && TD_FAKE_GATEWAY=1 uv run streamlit run src/task_design/ui/app.py`.
 데모 모드에서는 난이도 '상'을 고르면 자기 수정 루프 1회가, 메모에 '실패 시연'이라고 적으면 실패 리포트가 나옵니다.
-진행 중인 실행은 서버 프로세스에서 돌기 때문에 브라우저를 닫아도 계속되며, '초안 목록'이나 `?draft=<id>` 주소로 다시 열 수 있습니다. 서버를 다시 시작하면 중단된 실행에 오류가 표시되고 '재시도'로 이어서 진행합니다.
+진행 중인 실행은 서버 프로세스에서 돌기 때문에 브라우저를 닫아도 계속되며, '초안 목록'이나 `?draft=<id>` 주소로 다시 열 수 있습니다. 서버를 다시 시작하면 중단된 실행에 오류가 표시되고 '다시 실행'으로 이어서 진행합니다.
 
 추적을 보려면 호스트 `.env`에 `TD_LANGFUSE_PUBLIC_KEY=pk-lf-local`, `TD_LANGFUSE_SECRET_KEY=sk-lf-local`, `TD_LANGFUSE_PROJECT_ID=task-design`도 넣습니다.
 

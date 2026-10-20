@@ -8,9 +8,13 @@ import pytest
 
 from task_design.domain import Component, DraftState, ReviewDecision, ReviewLabel
 from task_design.repositories import TaskRepository
-from task_design.service import InvalidEditedTask, InvalidReviewLabels, SelfReview
+from task_design.service import (
+    InvalidDraftState,
+    InvalidEditedTask,
+    InvalidReviewLabels,
+    SelfReview,
+)
 from task_design.testing.workflow import start_awaiting_review, start_awaiting_selection
-from task_design.workflow import InvalidDraftState
 
 AUTHOR, REVIEWER = 1, 2
 
