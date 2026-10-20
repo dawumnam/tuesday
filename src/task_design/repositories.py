@@ -20,6 +20,7 @@ from task_design.domain import (
 )
 from task_design.gateway import ModelGateway, Vector
 from task_design.settings import Settings
+from task_design.traces import SearchHit, SearchTrace
 
 TaskSource = Literal["seed", "agent"]
 
@@ -39,6 +40,10 @@ _attachments = TypeAdapter(list[Attachment])
 
 def _vector_literal(vec: list[float]) -> str:
     return "[" + ",".join(repr(float(x)) for x in vec) + "]"
+
+
+def _float(x: object) -> float | None:
+    return None if x is None else float(x)  # type: ignore[arg-type]
 
 
 def _row_to_task(row: tuple) -> Task:
@@ -133,21 +138,36 @@ class TaskRepository:
         fused tasks go to ``gateway.rerank`` and the first ``k`` of its order
         are returned.
         """
+        tasks, _ = self._hybrid_search(query, k, pool=pool, draft_id=draft_id, explain=False)
+        return tasks
+
+    def hybrid_search_traced(
+        self, query: str, k: int = 5, *, pool: int = 20, draft_id: UUID | None = None
+    ) -> tuple[list[Task], SearchTrace]:
+        """``hybrid_search`` plus how it got there (every arm's ranks and scores, the RRF
+        fusion and the rerank order), for the 데모 모드's step-by-step view."""
+        tasks, trace = self._hybrid_search(query, k, pool=pool, draft_id=draft_id, explain=True)
+        assert trace is not None
+        return tasks, trace
+
+    def _hybrid_search(
+        self, query: str, k: int, *, pool: int, draft_id: UUID | None, explain: bool
+    ) -> tuple[list[Task], SearchTrace | None]:
         arm = max(pool, k)
         [q] = self._gateway.embed([query], draft_id=draft_id)
         with self._db.connection() as conn:
             rows = conn.execute(
                 f"""
                 WITH keyword AS (
-                    SELECT id, row_number() OVER (ORDER BY %(q)s <<-> search_text, id) AS r
+                    SELECT id, d, row_number() OVER (ORDER BY d, id) AS r
                     FROM (
-                        SELECT id, search_text FROM tasks
+                        SELECT id, %(q)s <<-> search_text AS d FROM tasks
                         WHERE status = 'active' AND %(q)s <<-> search_text <= %(max_kw_dist)s
                         ORDER BY %(q)s <<-> search_text LIMIT %(arm)s
                     ) s
                 ),
                 semantic AS (
-                    SELECT id, row_number() OVER (ORDER BY d, id) AS r
+                    SELECT id, d, row_number() OVER (ORDER BY d, id) AS r
                     FROM (
                         SELECT id, embedding <=> %(v)s::vector AS d FROM tasks
                         WHERE status = 'active'
@@ -155,14 +175,17 @@ class TaskRepository:
                     ) s
                 ),
                 fused AS (
-                    SELECT id, sum(1.0 / (%(rrf)s + r)) AS score
-                    FROM (SELECT * FROM keyword UNION ALL SELECT * FROM semantic) u
-                    GROUP BY id
+                    SELECT id,
+                           coalesce(1.0 / (%(rrf)s + k.r), 0)
+                             + coalesce(1.0 / (%(rrf)s + s.r), 0) AS score,
+                           k.r AS kr, 1 - k.d AS kw_sim, s.r AS sr, 1 - s.d AS cos
+                    FROM keyword k FULL JOIN semantic s USING (id)
                 )
-                SELECT {", ".join("t." + c.strip() for c in _TASK_COLUMNS.split(","))}
+                SELECT {", ".join("t." + c.strip() for c in _TASK_COLUMNS.split(","))},
+                       f.score, f.kr, f.kw_sim, f.sr, f.cos
                 FROM fused f JOIN tasks t USING (id)
                 ORDER BY f.score DESC, t.id
-                LIMIT %(pool)s
+                LIMIT %(limit)s
                 """,
                 {
                     "q": query,
@@ -170,22 +193,38 @@ class TaskRepository:
                     "arm": arm,
                     "max_kw_dist": 1 - KEYWORD_MIN_WORD_SIMILARITY,
                     "rrf": RRF_K,
-                    "pool": pool,
+                    "limit": None if explain else pool,  # the trace shows every ranked task
                 },
             ).fetchall()
-        fused = [_row_to_task(r) for r in rows]
-        if not fused:
-            return []
-        order = self._gateway.rerank(
-            query, [rerank_text(t) for t in fused], draft_id=draft_id
+        fused = [_row_to_task(r[:-5]) for r in rows[:pool]]
+        final: list[int] = []
+        if fused:
+            order = self._gateway.rerank(
+                query, [rerank_text(t) for t in fused], draft_id=draft_id
+            )
+            # Tolerate a sloppy reranker: drop bad/duplicate indices, keep the rest in fused order.
+            for i in order:
+                if 0 <= i < len(fused) and i not in final:
+                    final.append(i)
+            final += [i for i in range(len(fused)) if i not in final]
+            final = final[:k]
+        tasks = [fused[i] for i in final]
+        if not explain:
+            return tasks, None
+        final_rank = {i: n for n, i in enumerate(final, start=1)}
+        hits = [
+            SearchHit(
+                task_id=r[0], scenario=r[1],
+                keyword_rank=r[-4], word_similarity=_float(r[-3]),
+                semantic_rank=r[-2], cosine=_float(r[-1]),
+                fused_rank=n, fused_score=float(r[-5]), final_rank=final_rank.get(n - 1),
+            )
+            for n, r in enumerate(rows, start=1)
+        ]
+        return tasks, SearchTrace(
+            query=query, keyword_min_word_similarity=KEYWORD_MIN_WORD_SIMILARITY, rrf_k=RRF_K,
+            rerank_pool=pool, k=k, hits=hits,
         )
-        # Tolerate a sloppy reranker: drop bad/duplicate indices, keep the rest in fused order.
-        seen: list[int] = []
-        for i in order:
-            if 0 <= i < len(fused) and i not in seen:
-                seen.append(i)
-        seen += [i for i in range(len(fused)) if i not in seen]
-        return [fused[i] for i in seen[:k]]
 
     def find_duplicates(
         self, text: str, threshold: float | None = None, *, draft_id: UUID | None = None
@@ -215,6 +254,19 @@ class TaskRepository:
                 {"v": _vector_literal(v), "t": threshold},
             ).fetchall()
         return [SimilarTask(task=_row_to_task(r[:-1]), similarity=r[-1]) for r in rows]
+
+    def nearest_to_vector(self, vector: Vector) -> SimilarTask | None:
+        """The most similar active task (any similarity); for the 중복 검사 trace."""
+        with self._db.connection() as conn:
+            row = conn.execute(
+                f"""
+                SELECT {_TASK_COLUMNS}, 1 - (embedding <=> %(v)s::vector) AS similarity
+                FROM tasks WHERE status = 'active'
+                ORDER BY embedding <=> %(v)s::vector, id LIMIT 1
+                """,
+                {"v": _vector_literal(vector)},
+            ).fetchone()
+        return SimilarTask(task=_row_to_task(row[:-1]), similarity=row[-1]) if row else None
 
     def get(self, task_id: UUID) -> Task | None:
         with self._db.connection() as conn:

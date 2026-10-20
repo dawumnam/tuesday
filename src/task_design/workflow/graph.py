@@ -18,7 +18,9 @@ budget is also checked before every round's 모의 응시 (BUDGET CHECK). ``fini
 attaches the 실패 리포트 when the loop stopped while still failing or unverified.
 
 Each node is ``fn(deps, state) -> partial state``; when the spec has a
-``stage``, the draft's ``stage`` column is set before the node runs.
+``stage``, the draft's ``stage`` column is set before the node runs. With a run
+observer installed (데모 모드), ``observer.before_step`` is called first at every
+stage boundary (``NodeSpec.step``); it may block to pause the run there.
 """
 
 from __future__ import annotations
@@ -39,6 +41,7 @@ from task_design import tracing
 from task_design.domain import DraftInput, DraftState, Stage
 from task_design.workflow.errors import error_kind_of
 from task_design.workflow.nodes import fix, generation, mock_exam, scenarios
+from task_design.workflow.observer import StepPoint
 from task_design.workflow.state import Deps, WorkflowState, draft_id
 
 log = logging.getLogger(__name__)
@@ -80,6 +83,10 @@ class NodeSpec:
     name: str
     fn: NodeFn
     stage: Stage | None = None  # shown as Draft.stage while the node runs
+    # A stage boundary for the run observer (단계별 진행). False for the interrupt node
+    # (it re-runs on resume) and the parallel fan-out branches (their dispatcher is
+    # the boundary, so 모의 응시 and 채점 count as one step each).
+    step: bool = True
 
 
 def _node_specs() -> list[NodeSpec]:
@@ -88,15 +95,16 @@ def _node_specs() -> list[NodeSpec]:
                  Stage.SEARCHING_SIMILAR_TASKS),
         NodeSpec(N.GENERATE_CANDIDATES, scenarios.generate_candidates,
                  Stage.GENERATING_CANDIDATES),
-        NodeSpec(N.AWAIT_SELECTION, scenarios.await_selection),
+        NodeSpec(N.AWAIT_SELECTION, scenarios.await_selection, step=False),
         NodeSpec(N.WRITE_INSTRUCTION, generation.write_instruction, Stage.WRITING_INSTRUCTION),
         NodeSpec(N.WRITE_ATTACHMENTS, generation.write_attachments, Stage.WRITING_ATTACHMENTS),
         NodeSpec(N.WRITE_RUBRIC, generation.write_rubric, Stage.WRITING_RUBRIC),
         NodeSpec(N.REVIEW_TASK, generation.review_task, Stage.REVIEWING),
         NodeSpec(N.START_MOCK_EXAM, mock_exam.start_mock_exam, Stage.MOCK_EXAM),
-        NodeSpec(N.RUN_PERSONA, mock_exam.run_persona, Stage.MOCK_EXAM),
+        NodeSpec(N.RUN_PERSONA, mock_exam.run_persona, Stage.MOCK_EXAM, step=False),
         NodeSpec(N.START_GRADING, mock_exam.start_grading, Stage.GRADING),
-        NodeSpec(N.GRADE_SUBMISSION, mock_exam.grade_submission, Stage.GRADING),
+        NodeSpec(N.GRADE_SUBMISSION, mock_exam.grade_submission, Stage.GRADING,
+                 step=False),
         NodeSpec(N.JUDGE, mock_exam.judge, Stage.JUDGING),
         NodeSpec(N.FIX, fix.fix, Stage.FIXING),
         NodeSpec(N.FINISH, fix.finish),
@@ -105,6 +113,8 @@ def _node_specs() -> list[NodeSpec]:
 
 def _bind(deps: Deps, spec: NodeSpec) -> Callable[[WorkflowState], dict[str, Any]]:
     def node(state: WorkflowState) -> dict[str, Any]:
+        if deps.observer is not None and spec.step:  # 데모 모드: may pause here
+            deps.observer.before_step(StepPoint(draft_id(state), spec.name, spec.stage, state))
         if spec.stage is not None:
             deps.drafts.set_stage(draft_id(state), spec.stage)
         with tracing.node_scope(spec.name):  # names this node's model calls in Langfuse

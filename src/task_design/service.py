@@ -40,6 +40,7 @@ from task_design.workflow import (
     UnknownCandidate,
     Workflow,
 )
+from task_design.workflow.observer import RunObserver
 
 # Every exception the service raises (messages are Korean, meant for the user).
 __all__ = [
@@ -165,7 +166,10 @@ class TaskDesignService:
         *,
         run_graph: GraphRunner = _run_inline,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        observer: RunObserver | None = None,
     ) -> None:
+        """``observer`` is for the 데모 모드 only (단계별 진행 and RAG traces, see
+        ``task_design.stepper``); leave it ``None`` for real runs."""
         self.db = db
         self.gateway = gateway
         self.settings = settings
@@ -183,6 +187,7 @@ class TaskDesignService:
                 drafts=self._drafts,
                 tasks=self._tasks,
                 competencies=self._competencies,
+                observer=observer,
             )
         )
 

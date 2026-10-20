@@ -10,6 +10,7 @@ from langgraph.types import interrupt
 
 from task_design.domain import DraftState, ScenarioCandidate
 from task_design.gateway import Role, Vector
+from task_design.traces import DuplicateCheckTrace, ProposalCheck, ProposalOutcome
 from task_design.workflow import prompts
 from task_design.workflow.errors import CandidatesExhausted
 from task_design.workflow.schemas import CandidateBatch, CandidateProposal
@@ -36,9 +37,12 @@ def _cosine(a: Vector, b: Vector) -> float:
 def search_similar_tasks(deps: Deps, state: WorkflowState) -> dict[str, Any]:
     did, input = draft_id(state), draft_input(state)
     comps = [c for cid in input.competency_ids if (c := deps.competencies.get(cid))]
-    found = deps.tasks.hybrid_search(
-        prompts.similar_task_query(input, comps), k=deps.settings.similar_tasks_k, draft_id=did
-    )
+    query, k = prompts.similar_task_query(input, comps), deps.settings.similar_tasks_k
+    if deps.observer is None:
+        found = deps.tasks.hybrid_search(query, k=k, draft_id=did)
+    else:  # 데모 모드: show how the 유사 과제 were found
+        found, trace = deps.tasks.hybrid_search_traced(query, k=k, draft_id=did)
+        deps.observer.record_trace(did, trace)
     deps.drafts.set_similar_tasks(did, found)
     return {"similar_tasks": [dump(t) for t in found]}
 
@@ -61,7 +65,8 @@ def generate_candidates(deps: Deps, state: WorkflowState) -> dict[str, Any]:
 
     accepted: list[tuple[CandidateProposal, Vector]] = []
     rejected: list[str] = []
-    for _ in range(max(1, deps.settings.candidate_generation_attempts)):
+    checks: list[ProposalCheck] | None = [] if deps.observer is not None else None  # 데모 모드
+    for attempt in range(1, max(1, deps.settings.candidate_generation_attempts) + 1):
         needed = CANDIDATE_COUNT - len(accepted)
         avoid = shown + [p.scenario for p, _ in accepted] + rejected
         batch = deps.gateway.complete(
@@ -72,6 +77,10 @@ def generate_candidates(deps: Deps, state: WorkflowState) -> dict[str, Any]:
         )
         proposals = [p for p in batch.candidates if p.scenario not in shown][:needed]
         rejected += [p.scenario for p in batch.candidates if p.scenario in shown]
+        if checks is not None:
+            checks += [ProposalCheck(attempt=attempt, title=p.title, scenario=p.scenario,
+                                     outcome="already_shown")
+                       for p in batch.candidates if p.scenario in shown]
         if not proposals:
             continue
         vectors = deps.gateway.embed([p.scenario for p in proposals], draft_id=did)
@@ -82,6 +91,10 @@ def generate_candidates(deps: Deps, state: WorkflowState) -> dict[str, Any]:
                 rejected.append(proposal.scenario)
             else:
                 accepted.append((proposal, vector))
+            if checks is not None:
+                checks.append(_check(deps, attempt, proposal, vector, peer,
+                                     "db_duplicate" if db_dups else
+                                     "peer_duplicate" if peer >= threshold else "accepted"))
         if len(accepted) == CANDIDATE_COUNT:
             break
     else:
@@ -99,8 +112,22 @@ def generate_candidates(deps: Deps, state: WorkflowState) -> dict[str, Any]:
         )
         for p, _ in accepted
     ]
+    if checks is not None and deps.observer is not None:
+        deps.observer.record_trace(did, DuplicateCheckTrace(threshold=threshold, proposals=checks))
     deps.drafts.set_candidates(did, result)
     return {"candidates": [dump(c) for c in result]}
+
+
+def _check(deps: Deps, attempt: int, proposal: CandidateProposal, vector: Vector,
+           peer: float, outcome: ProposalOutcome) -> ProposalCheck:
+    nearest = deps.tasks.nearest_to_vector(vector)
+    return ProposalCheck(
+        attempt=attempt, title=proposal.title, scenario=proposal.scenario, outcome=outcome,
+        max_db_similarity=nearest.similarity if nearest else None,
+        nearest_task_id=nearest.task.id if nearest else None,
+        nearest_task_scenario=nearest.task.scenario if nearest else None,
+        max_peer_similarity=peer,
+    )
 
 
 def await_selection(deps: Deps, state: WorkflowState) -> dict[str, Any]:

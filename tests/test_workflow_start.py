@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import math
-import random
 import uuid
 
 import pytest
@@ -23,27 +21,12 @@ from task_design.testing.workflow import (
     ensure_competencies,
     make_input,
     make_task,
+    random_unit,
     scripted_batch,
     seed_similar_tasks,
     start_awaiting_selection,
+    with_cosine,
 )
-
-
-def random_unit(dim: int) -> list[float]:
-    rng = random.Random(uuid.uuid4().int)
-    v = [rng.gauss(0, 1) for _ in range(dim)]
-    n = math.sqrt(sum(x * x for x in v))
-    return [x / n for x in v]
-
-
-def with_cosine(v: list[float], cosine: float) -> list[float]:
-    """A unit vector whose cosine similarity with unit vector ``v`` is ``cosine``."""
-    w = random_unit(len(v))
-    dot = sum(a * b for a, b in zip(v, w, strict=True))
-    w = [b - dot * a for a, b in zip(v, w, strict=True)]
-    n = math.sqrt(sum(x * x for x in w))
-    s = math.sqrt(1 - cosine * cosine)
-    return [cosine * a + s * b / n for a, b in zip(v, w, strict=True)]
 
 
 def test_start_offers_three_candidates_each_referencing_similar_tasks(

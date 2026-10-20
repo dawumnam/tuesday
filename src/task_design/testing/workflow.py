@@ -18,6 +18,8 @@ the prompt. Combine it with responders for other GENERATION schemas via
 from __future__ import annotations
 
 import itertools
+import math
+import random
 import threading
 import uuid
 from collections.abc import Callable, Mapping, Sequence
@@ -110,6 +112,23 @@ def ensure_competencies(db: Database, ids: tuple[str, ...] = TEST_COMPETENCY_IDS
                         "VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
                         (sid, level.value, f"{sid} {level.ko} 수준 행동"),
                     )
+
+
+def random_unit(dim: int) -> list[float]:
+    rng = random.Random(uuid.uuid4().int)
+    v = [rng.gauss(0, 1) for _ in range(dim)]
+    n = math.sqrt(sum(x * x for x in v))
+    return [x / n for x in v]
+
+
+def with_cosine(v: list[float], cosine: float) -> list[float]:
+    """A unit vector whose cosine similarity with unit vector ``v`` is ``cosine``."""
+    w = random_unit(len(v))
+    dot = sum(a * b for a, b in zip(v, w, strict=True))
+    w = [b - dot * a for a, b in zip(v, w, strict=True)]
+    n = math.sqrt(sum(x * x for x in w))
+    s = math.sqrt(1 - cosine * cosine)
+    return [cosine * a + s * b / n for a, b in zip(v, w, strict=True)]
 
 
 def seed_similar_tasks(

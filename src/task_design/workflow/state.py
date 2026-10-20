@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import operator
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal, TypedDict
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypedDict
 from uuid import UUID
 
 from task_design.db import Database
@@ -18,6 +18,9 @@ from task_design.gateway import ModelGateway
 from task_design.repositories import CompetencyRepository, TaskRepository
 from task_design.settings import Settings
 from task_design.workflow.drafts import DraftStore
+
+if TYPE_CHECKING:
+    from task_design.workflow.observer import RunObserver
 
 
 class WorkflowState(TypedDict, total=False):
@@ -83,6 +86,8 @@ class Deps:
     drafts: DraftStore
     tasks: TaskRepository
     competencies: CompetencyRepository
+    # 데모 모드 only (단계별 진행, RAG traces); None in real mode. See workflow.observer.
+    observer: RunObserver | None = None
 
 
 def draft_id(state: WorkflowState | PersonaJob | GradingJob) -> UUID:
