@@ -311,7 +311,8 @@ class Personas:
             self.before_call(level, call)
         asked = sum(m.role == "assistant" for m in call.messages)
         if asked < self.asks[level]:
-            return {"action": "ask", "content": f"{level.ko} 수준 요청 {asked + 1}"}
+            # Tagged too: a persona out of turns has its last ask taken as the output.
+            return {"action": "ask", "content": f"{level.ko} 수준 요청 {asked + 1} {output_tag(level)}"}
         return {"action": "submit", "content": f"최종 산출물 {output_tag(level)}"}
 
 
