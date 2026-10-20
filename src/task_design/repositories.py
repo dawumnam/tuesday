@@ -16,18 +16,19 @@ from task_design.domain import (
     Level,
     LevelIndicator,
     Rubric,
+    SearchQuery,
     Task,
 )
 from task_design.gateway import ModelGateway, Vector
 from task_design.settings import Settings
-from task_design.traces import SearchHit, SearchTrace
+from task_design.traces import SearchHit, SearchTrace, TermMatch
 
 TaskSource = Literal["seed", "agent"]
 
 # Reciprocal rank fusion constant (Cormack et al. 2009).
 RRF_K = 60
 
-# Minimum pg_trgm word_similarity(query, search_text) for the keyword arm
+# Minimum pg_trgm word_similarity(term, search_text) for a 검색어 term to match in the keyword arm
 # (pg_trgm's own default similarity threshold). Below it the "match" is one or
 # two incidental trigrams, e.g. a shared leading syllable.
 KEYWORD_MIN_WORD_SIMILARITY = 0.3
@@ -126,45 +127,76 @@ class TaskRepository:
     # --- reads -------------------------------------------------------------------
 
     def hybrid_search(
-        self, query: str, k: int = 5, *, pool: int = 20, draft_id: UUID | None = None
+        self, query: SearchQuery | str, k: int = 5, *, pool: int = 20,
+        draft_id: UUID | None = None,
     ) -> list[Task]:
-        """유사 과제 검색: trigram + vector rankings fused by RRF.
+        """유사 과제 검색: keyword (trigram) + vector rankings fused by RRF.
 
-        Each arm contributes its top ``max(pool, k)`` tasks. The keyword arm
-        only ranks real keyword matches (word similarity >=
-        ``KEYWORD_MIN_WORD_SIMILARITY``): otherwise non-matching tasks would be
-        ranked there by an arbitrary tie-break and their RRF score could push a
-        strong semantic-only match out of the results. The top ``pool``
+        ``query.text`` is embedded for the vector arm and given to the reranker.
+        The keyword arm scores every ``query.terms`` entry on its own against
+        상황 + 지시문 + 직무: a term counts for a task when its word similarity
+        is >= ``KEYWORD_MIN_WORD_SIMILARITY``. Tasks are ranked by the number
+        of matching terms, then the sum of their similarities; tasks matching no
+        term are not ranked there at all (otherwise an arbitrary tie-break would
+        rank them and their RRF score could push a strong semantic-only match
+        out). A plain string is a single term.
+
+        Each arm contributes its top ``max(pool, k)`` tasks. The top ``pool``
         fused tasks go to ``gateway.rerank`` and the first ``k`` of its order
         are returned.
         """
-        tasks, _ = self._hybrid_search(query, k, pool=pool, draft_id=draft_id, explain=False)
+        tasks, _ = self._hybrid_search(
+            SearchQuery.of(query), k, pool=pool, draft_id=draft_id, explain=False
+        )
         return tasks
 
     def hybrid_search_traced(
-        self, query: str, k: int = 5, *, pool: int = 20, draft_id: UUID | None = None
+        self, query: SearchQuery | str, k: int = 5, *, pool: int = 20,
+        draft_id: UUID | None = None,
     ) -> tuple[list[Task], SearchTrace]:
-        """``hybrid_search`` plus how it got there (every arm's ranks and scores, the RRF
-        fusion and the rerank order), for the 데모 모드's step-by-step view."""
-        tasks, trace = self._hybrid_search(query, k, pool=pool, draft_id=draft_id, explain=True)
+        """``hybrid_search`` plus how it got there (every arm's ranks and scores, the
+        matching terms, the RRF fusion and the rerank order), for the 데모 모드's
+        step-by-step view."""
+        tasks, trace = self._hybrid_search(
+            SearchQuery.of(query), k, pool=pool, draft_id=draft_id, explain=True
+        )
         assert trace is not None
         return tasks, trace
 
     def _hybrid_search(
-        self, query: str, k: int, *, pool: int, draft_id: UUID | None, explain: bool
+        self, query: SearchQuery, k: int, *, pool: int, draft_id: UUID | None, explain: bool
     ) -> tuple[list[Task], SearchTrace | None]:
         arm = max(pool, k)
-        [q] = self._gateway.embed([query], draft_id=draft_id)
+        terms = list(dict.fromkeys(t.strip() for t in query.terms if t.strip()))
+        [q] = self._gateway.embed([query.text], draft_id=draft_id)
         with self._db.connection() as conn:
+            # `term <% search_text` (word_similarity >= this threshold) can use the
+            # trigram GiST index; transaction-local.
+            conn.execute(
+                "SELECT set_config('pg_trgm.word_similarity_threshold', %s, true)",
+                (str(KEYWORD_MIN_WORD_SIMILARITY),),
+            )
             rows = conn.execute(
                 f"""
-                WITH keyword AS (
-                    SELECT id, d, row_number() OVER (ORDER BY d, id) AS r
+                WITH terms AS (
+                    SELECT term, pos FROM unnest(%(terms)s::text[]) WITH ORDINALITY AS u(term, pos)
+                ),
+                matches AS (
+                    SELECT t.id, terms.term, terms.pos,
+                           word_similarity(terms.term, t.search_text) AS sim
+                    FROM terms JOIN tasks t ON terms.term <%% t.search_text
+                    WHERE t.status = 'active'
+                ),
+                keyword AS (
+                    SELECT id, n, score, matches,
+                           row_number() OVER (ORDER BY n DESC, score DESC, id) AS r
                     FROM (
-                        SELECT id, %(q)s <<-> search_text AS d FROM tasks
-                        WHERE status = 'active' AND %(q)s <<-> search_text <= %(max_kw_dist)s
-                        ORDER BY %(q)s <<-> search_text LIMIT %(arm)s
-                    ) s
+                        SELECT id, count(*) AS n, sum(sim) AS score,
+                               jsonb_agg(jsonb_build_object('term', term, 'similarity', sim)
+                                         ORDER BY pos) AS matches
+                        FROM matches WHERE sim >= %(min_sim)s GROUP BY id
+                    ) g
+                    ORDER BY n DESC, score DESC, id LIMIT %(arm)s
                 ),
                 semantic AS (
                     SELECT id, d, row_number() OVER (ORDER BY d, id) AS r
@@ -178,29 +210,31 @@ class TaskRepository:
                     SELECT id,
                            coalesce(1.0 / (%(rrf)s + k.r), 0)
                              + coalesce(1.0 / (%(rrf)s + s.r), 0) AS score,
-                           k.r AS kr, 1 - k.d AS kw_sim, s.r AS sr, 1 - s.d AS cos
+                           k.r AS kr, k.score AS kw_score, k.matches AS kw_matches,
+                           s.r AS sr, 1 - s.d AS cos
                     FROM keyword k FULL JOIN semantic s USING (id)
                 )
                 SELECT {", ".join("t." + c.strip() for c in _TASK_COLUMNS.split(","))},
-                       f.score, f.kr, f.kw_sim, f.sr, f.cos
+                       f.score, f.kr, f.kw_score, f.kw_matches, f.sr, f.cos
                 FROM fused f JOIN tasks t USING (id)
                 ORDER BY f.score DESC, t.id
                 LIMIT %(limit)s
                 """,
                 {
-                    "q": query,
+                    "terms": terms,
+                    "min_sim": KEYWORD_MIN_WORD_SIMILARITY,
                     "v": _vector_literal(q),
                     "arm": arm,
-                    "max_kw_dist": 1 - KEYWORD_MIN_WORD_SIMILARITY,
                     "rrf": RRF_K,
                     "limit": None if explain else pool,  # the trace shows every ranked task
                 },
             ).fetchall()
-        fused = [_row_to_task(r[:-5]) for r in rows[:pool]]
+        n_task = len(_TASK_COLUMNS.split(","))
+        fused = [_row_to_task(r[:n_task]) for r in rows[:pool]]
         final: list[int] = []
         if fused:
             order = self._gateway.rerank(
-                query, [rerank_text(t) for t in fused], draft_id=draft_id
+                query.text, [rerank_text(t) for t in fused], draft_id=draft_id
             )
             # Tolerate a sloppy reranker: drop bad/duplicate indices, keep the rest in fused order.
             for i in order:
@@ -212,17 +246,19 @@ class TaskRepository:
         if not explain:
             return tasks, None
         final_rank = {i: n for n, i in enumerate(final, start=1)}
-        hits = [
-            SearchHit(
+        hits = []
+        for n, r in enumerate(rows, start=1):
+            score, kr, kw_score, kw_matches, sr, cos = r[n_task:]
+            hits.append(SearchHit(
                 task_id=r[0], scenario=r[1],
-                keyword_rank=r[-4], word_similarity=_float(r[-3]),
-                semantic_rank=r[-2], cosine=_float(r[-1]),
-                fused_rank=n, fused_score=float(r[-5]), final_rank=final_rank.get(n - 1),
-            )
-            for n, r in enumerate(rows, start=1)
-        ]
+                keyword_rank=kr, keyword_score=_float(kw_score),
+                keyword_matches=[TermMatch.model_validate(m) for m in kw_matches or []],
+                semantic_rank=sr, cosine=_float(cos),
+                fused_rank=n, fused_score=float(score), final_rank=final_rank.get(n - 1),
+            ))
         return tasks, SearchTrace(
-            query=query, keyword_min_word_similarity=KEYWORD_MIN_WORD_SIMILARITY, rrf_k=RRF_K,
+            query=query.text, terms=terms,
+            keyword_min_word_similarity=KEYWORD_MIN_WORD_SIMILARITY, rrf_k=RRF_K,
             rerank_pool=pool, k=k, hits=hits,
         )
 

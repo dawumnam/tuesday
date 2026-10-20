@@ -209,8 +209,9 @@ def test_search_trace_explains_how_the_similar_tasks_were_found(
     assert len(trace.final()) == min(settings.similar_tasks_k, len(trace.hits))
     for h in trace.hits:
         assert h.keyword_rank is not None or h.semantic_rank is not None
-        if h.word_similarity is not None:
-            assert h.word_similarity >= KEYWORD_MIN_WORD_SIMILARITY
+        assert (h.keyword_rank is not None) == bool(h.keyword_matches)
+        for m in h.keyword_matches:
+            assert m.term in trace.terms and m.similarity >= KEYWORD_MIN_WORD_SIMILARITY
         expected = sum(1 / (RRF_K + r) for r in (h.keyword_rank, h.semantic_rank) if r)
         assert h.fused_score == pytest.approx(expected)
     assert [h.fused_rank for h in trace.hits] == list(range(1, len(trace.hits) + 1))

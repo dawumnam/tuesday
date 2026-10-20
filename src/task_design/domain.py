@@ -231,6 +231,22 @@ class Audience(BaseModel):
     career_level: str = Field(min_length=1)
 
 
+class SearchQuery(BaseModel):
+    """검색어 for 유사 과제 검색.
+
+    ``text`` is embedded for the vector arm and shown to the reranker. ``terms``
+    feed the keyword arm, each scored separately: a long query joined into one
+    string dilutes its trigram similarity to any single matching phrase.
+    """
+
+    text: str
+    terms: list[str] = Field(min_length=1)
+
+    @classmethod
+    def of(cls, query: SearchQuery | str) -> SearchQuery:
+        return query if isinstance(query, SearchQuery) else cls(text=query, terms=[query])
+
+
 class DraftInput(BaseModel):
     competency_ids: list[str] = Field(min_length=1, max_length=2)
     audience: Audience

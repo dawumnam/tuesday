@@ -191,9 +191,14 @@ def _table(rows: list[dict[str, Any]]) -> None:
 
 def show_search_trace(trace: SearchTrace) -> None:
     st.markdown("##### ① 키워드(트라이그램) 순위")
-    st.caption(f"상황+지시문과 검색어의 단어 유사도(pg_trgm)가 "
-               f"{trace.keyword_min_word_similarity} 이상인 과제만 순위에 듭니다.")
-    _table([{"순위": h.keyword_rank, "단어 유사도": round(h.word_similarity or 0, 3),
+    st.caption("검색어: " + " · ".join(f"‘{t}’" for t in trace.terms))
+    st.caption(f"검색어마다 따로 상황+지시문+직무와의 단어 유사도(pg_trgm)를 재고, "
+               f"{trace.keyword_min_word_similarity} 이상이면 일치로 칩니다. 일치한 검색어가 "
+               f"많은 순, 같으면 유사도 합이 큰 순이며, 하나도 일치하지 않으면 순위에 들지 않습니다.")
+    _table([{"순위": h.keyword_rank,
+             "일치한 검색어": ", ".join(f"{m.term} ({m.similarity:.2f})" for m in h.keyword_matches),
+             "일치 수": len(h.keyword_matches),
+             "유사도 합": round(h.keyword_score or 0, 3),
              "상황": _short(h.scenario)}
             for h in sorted((h for h in trace.hits if h.keyword_rank),
                             key=lambda h: h.keyword_rank or 0)])

@@ -12,13 +12,21 @@ from uuid import UUID
 from pydantic import BaseModel
 
 
+class TermMatch(BaseModel):
+    """One 검색어 term that matched a task in the keyword arm."""
+
+    term: str
+    similarity: float  # pg_trgm word_similarity(term, 상황+지시문+직무)
+
+
 class SearchHit(BaseModel):
     """One task that either search arm ranked, with its place in every step."""
 
     task_id: UUID
     scenario: str
     keyword_rank: int | None = None  # 1-based rank in the trigram arm (None: no match)
-    word_similarity: float | None = None  # pg_trgm word_similarity(query, 상황+지시문)
+    keyword_matches: list[TermMatch] = []  # terms at or above the threshold, in query order
+    keyword_score: float | None = None  # Σ similarity over keyword_matches
     semantic_rank: int | None = None  # 1-based rank in the vector arm
     cosine: float | None = None  # cosine similarity of the embeddings
     fused_rank: int  # 1-based rank after RRF
@@ -28,8 +36,9 @@ class SearchHit(BaseModel):
 
 class SearchTrace(BaseModel):
     kind: Literal["search"] = "search"
-    query: str
-    keyword_min_word_similarity: float
+    query: str  # embedded for the vector arm and given to the reranker
+    terms: list[str]  # the keyword arm's terms, each scored separately
+    keyword_min_word_similarity: float  # per term
     rrf_k: int
     rerank_pool: int  # top fused tasks sent to the reranker
     k: int  # tasks kept after reranking

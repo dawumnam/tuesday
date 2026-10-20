@@ -20,6 +20,7 @@ from task_design.domain import (
     Level,
     LevelIndicator,
     Rubric,
+    SearchQuery,
     Task,
 )
 from task_design.gateway import Message
@@ -78,14 +79,32 @@ def _competency_lines(input: DraftInput, competencies: Sequence[Competency]) -> 
     return "\n".join(lines)
 
 
-def similar_task_query(input: DraftInput, competencies: Sequence[Competency]) -> str:
-    """검색어 for 유사 과제 검색 (trigram + vector + rerank)."""
+# 메모 words too generic to be a keyword term on their own.
+_MEMO_STOPWORDS = frozenset(
+    "그리고 그래서 관련 관련된 위한 위해 대한 대해 중심 중심으로 있는 하는 되는 같은 정도 수준 "
+    "과제 상황 내용 부분 좀 더 및 등 꼭 잘 많이 주세요 해주세요 합니다 있습니다".split()
+)
+_MEMO_WORD = re.compile(r"[0-9A-Za-z가-힣]+")
+MAX_MEMO_TERMS = 5
+
+
+def similar_task_query(input: DraftInput, competencies: Sequence[Competency]) -> SearchQuery:
+    """검색어 for 유사 과제 검색.
+
+    ``text`` (vector arm, reranker): 역량 names, 직무, 경력 수준 and 메모 in one string.
+    ``terms`` (keyword arm, each scored on its own): each 역량 name, the 직무, and up
+    to ``MAX_MEMO_TERMS`` 메모 words. The 경력 수준 ("3년 차") is left out of the
+    terms: its trigrams match years and counts in unrelated tasks.
+    """
     names = {c.id: c.name for c in competencies}
-    parts = [names.get(cid, cid) for cid in input.competency_ids]
-    parts += [input.audience.job, input.audience.career_level]
+    terms = [names.get(cid, cid) for cid in input.competency_ids] + [input.audience.job]
+    parts = [*terms, input.audience.career_level]
     if input.memo:
         parts.append(input.memo)
-    return " ".join(parts)
+        words = [w for w in _MEMO_WORD.findall(input.memo)
+                 if len(w) >= 2 and w not in _MEMO_STOPWORDS]
+        terms += list(dict.fromkeys(words))[:MAX_MEMO_TERMS]
+    return SearchQuery(text=" ".join(parts), terms=list(dict.fromkeys(terms)))
 
 
 SCENARIO_SYSTEM = """\

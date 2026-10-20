@@ -12,9 +12,17 @@ import uuid
 
 import pytest
 
-from task_design.domain import Audience, Level, Rubric, RubricItem, RubricItemType, Task
+from task_design.domain import (
+    Audience,
+    Level,
+    Rubric,
+    RubricItem,
+    RubricItemType,
+    SearchQuery,
+    Task,
+)
 from task_design.gateway import Role
-from task_design.repositories import TaskRepository
+from task_design.repositories import KEYWORD_MIN_WORD_SIMILARITY, TaskRepository
 
 
 def random_unit(dim: int) -> list[float]:
@@ -133,6 +141,66 @@ def test_tasks_without_keyword_overlap_do_not_crowd_out_a_semantic_match(repo, f
     hits = repo.hybrid_search(query, k=5)
 
     assert semantic_id in [t.id for t in hits]
+
+
+def test_multi_term_query_finds_a_task_that_matches_only_one_term(repo, fake_gateway, dim):
+    # Joined into one string, the terms dilute each other's trigram score below
+    # the keyword threshold; each term is scored on its own.
+    query = SearchQuery(
+        text="과업 정의와 AI 적용 판단 냉동창고 온도기록 재무 기획",
+        terms=["과업 정의와 AI 적용 판단", "냉동창고 온도기록", "재무 기획"],
+    )
+    q = random_unit(dim)
+    fake_gateway.set_embedding(query.text, q)
+
+    # Semantically close distractors with unrelated wording.
+    for i in range(8):
+        text = f"분기별 마케팅 예산 집행 현황 {i} {uuid.uuid4().hex}"
+        fake_gateway.set_embedding(text, with_cosine(q, 0.95))
+        repo.add(make_task(text))
+
+    keyword_text = f"물류센터 냉동창고 온도기록에서 이상치를 찾는 상황 {uuid.uuid4().hex}"
+    fake_gateway.set_embedding(keyword_text, with_cosine(q, 0.0))
+    keyword_id = repo.add(make_task(keyword_text))
+
+    hits, trace = repo.hybrid_search_traced(query, k=3)
+
+    assert keyword_id in [t.id for t in hits]
+    [hit] = [h for h in trace.hits if h.task_id == keyword_id]
+    assert hit.keyword_rank == 1
+    assert [m.term for m in hit.keyword_matches] == ["냉동창고 온도기록"]
+    assert hit.keyword_matches[0].similarity >= KEYWORD_MIN_WORD_SIMILARITY
+
+
+def test_keyword_ranking_prefers_tasks_matching_more_terms(repo, fake_gateway, dim):
+    query = SearchQuery(text="온보딩 체크리스트 물류 교육", terms=["온보딩 체크리스트", "물류 교육"])
+    fake_gateway.set_embedding(query.text, random_unit(dim))
+
+    one = repo.add(make_task(f"온보딩 체크리스트를 만드는 상황 {uuid.uuid4().hex}"))
+    both = repo.add(make_task(f"물류 교육용 온보딩 체크리스트 초안 상황 {uuid.uuid4().hex}"))
+    none = repo.add(make_task(f"분기 재무 보고 상황 {uuid.uuid4().hex}"))
+
+    _, trace = repo.hybrid_search_traced(query, k=3)
+
+    ranked = sorted((h for h in trace.hits if h.keyword_rank), key=lambda h: h.keyword_rank)
+    assert [h.task_id for h in ranked] == [both, one]
+    assert none not in [h.task_id for h in ranked]
+    assert {m.term for m in ranked[0].keyword_matches} == {"온보딩 체크리스트", "물류 교육"}
+    for h in ranked:
+        assert all(m.similarity >= KEYWORD_MIN_WORD_SIMILARITY for m in h.keyword_matches)
+        assert h.keyword_score == pytest.approx(sum(m.similarity for m in h.keyword_matches))
+
+
+def test_search_text_includes_the_tasks_job(repo, fake_gateway, dim):
+    query = SearchQuery(text="회계감사", terms=["회계감사"])
+    fake_gateway.set_embedding(query.text, random_unit(dim))
+    task = make_task(f"분기 보고 상황 {uuid.uuid4().hex}")
+    task_id = repo.add(task.model_copy(update={"audience": Audience(job="회계감사", career_level="신입")}))
+
+    _, trace = repo.hybrid_search_traced(query, k=3)
+
+    [hit] = [h for h in trace.hits if h.task_id == task_id]
+    assert hit.keyword_rank == 1
 
 
 def test_rerank_order_is_applied(repo, fake_gateway, dim):
