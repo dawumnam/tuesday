@@ -31,11 +31,20 @@ def test_scripted_responses_come_back_in_order_validated_against_schema():
 
 
 def test_callable_responder_sees_the_call():
-    fake = FakeGateway().respond_with(
-        Role.EXAMINEE, lambda call: "상 수준" if "상" in call.prompt else "하 수준"
-    )
-    assert fake.complete(Role.EXAMINEE, msgs("당신은 상 수준")) == "상 수준"
-    assert fake.complete(Role.EXAMINEE, msgs("당신은 하 수준")) == "하 수준"
+    seen = []
+
+    def respond(call):
+        seen.append(call)
+        return {"text": f"{len(seen)}번째 응답"}
+
+    fake = FakeGateway().respond_with(Role.GRADING, respond)
+    draft = uuid4()
+    sent = msgs("a")
+
+    assert fake.complete(Role.GRADING, sent, Answer, draft_id=draft) == Answer(text="1번째 응답")
+    [call] = seen
+    assert (call.role, call.schema, call.draft_id, call.messages) == (
+        Role.GRADING, Answer, draft, sent)
 
 
 def test_records_calls_and_token_usage_per_draft():

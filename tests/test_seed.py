@@ -3,47 +3,26 @@
 from __future__ import annotations
 
 import json
-import os
-import uuid
 from collections import Counter
 from collections.abc import Iterator
 
-import psycopg
 import pytest
-from psycopg import sql
-from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 from task_design.cli import DEFAULT_SEED_DIR, main
 from task_design.db import Database
 from task_design.gateway import Role
 from task_design.domain import Level, Rubric, RubricItemType, Task
-from task_design.migrate import apply_migrations
 from task_design.repositories import CompetencyRepository, TaskRepository
 from task_design.settings import Settings
+from task_design.testing.database import fresh_database
 from task_design.testing.fake_gateway import FakeGateway
-
-ADMIN_URL = os.environ.get(
-    "TEST_DATABASE_URL", "postgresql://task_design:task_design@localhost:54329/task_design"
-)
 
 
 @pytest.fixture(scope="module")
 def fresh_url() -> Iterator[str]:
     """A migrated database of its own: the session DB is shared and never truncated."""
-    name = f"td_seed_{uuid.uuid4().hex[:12]}"
-    with psycopg.connect(ADMIN_URL, autocommit=True) as admin:
-        admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
-    params = conninfo_to_dict(ADMIN_URL)
-    params["dbname"] = name
-    url = make_conninfo(**params)
-    try:
-        apply_migrations(url)
+    with fresh_database("td_seed") as url:
         yield url
-    finally:
-        with psycopg.connect(ADMIN_URL, autocommit=True) as admin:
-            admin.execute(
-                sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(name))
-            )
 
 
 @pytest.fixture

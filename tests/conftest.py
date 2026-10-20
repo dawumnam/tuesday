@@ -7,42 +7,22 @@ several worktrees can run the suite concurrently against one server.
 
 from __future__ import annotations
 
-import os
-import uuid
 from collections.abc import Iterator
 
-import psycopg
 import pytest
-from psycopg import sql
-from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 from task_design.db import Database
-from task_design.migrate import apply_migrations
 from task_design.service import TaskDesignService
 from task_design.settings import Settings
+from task_design.testing.database import fresh_database
 from task_design.testing.fake_gateway import FakeGateway
-
-DEFAULT_TEST_DATABASE_URL = "postgresql://task_design:task_design@localhost:54329/task_design"
 
 
 @pytest.fixture(scope="session")
 def database_url() -> Iterator[str]:
     """URL of a fresh, migrated database that lives for the whole test session."""
-    admin_url = os.environ.get("TEST_DATABASE_URL", DEFAULT_TEST_DATABASE_URL)
-    name = f"td_test_{uuid.uuid4().hex[:12]}"
-    with psycopg.connect(admin_url, autocommit=True) as admin:
-        admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
-    params = conninfo_to_dict(admin_url)
-    params["dbname"] = name
-    url = make_conninfo(**params)
-    try:
-        apply_migrations(url)
+    with fresh_database("td_test") as url:
         yield url
-    finally:
-        with psycopg.connect(admin_url, autocommit=True) as admin:
-            admin.execute(
-                sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(name))
-            )
 
 
 @pytest.fixture
