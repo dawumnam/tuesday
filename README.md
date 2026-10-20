@@ -49,7 +49,7 @@ AI 활용 역량 평가용 과제(상황·지시문·첨부 자료·채점 기�
 | `TD_DATABASE_URL` | `postgresql://task_design:task_design@localhost:54329/task_design` | 앱 DB |
 | `TD_SEED_ON_START` | `false` | app 컨테이너 시작 시 시드 적재 여부 (compose 전용) |
 | `TD_LANGFUSE_HOST` / `TD_LANGFUSE_PUBLIC_KEY` / `TD_LANGFUSE_SECRET_KEY` | `http://localhost:3300` / 없음 / 없음 | 두 키가 모두 있어야 추적합니다. 로컬 Langfuse의 키는 `pk-lf-local` / `sk-lf-local`입니다. |
-| `TD_LANGFUSE_PROJECT_ID` | 없음 | 지표 화면의 초안별 trace 링크용. 로컬 Langfuse 프로젝트 id는 `task-design`입니다. |
+| `TD_LANGFUSE_PROJECT_ID` | 없음 | 지표 화면의 초안별 추적 링크(Langfuse 세션)용. 로컬 Langfuse 프로젝트 id는 `task-design`입니다. |
 | `TD_LANGFUSE_PUBLIC_HOST` | `TD_LANGFUSE_HOST` | 브라우저에서 여는 trace 링크의 Langfuse 주소. compose에서는 앱이 내부 주소(`http://langfuse:3000`)로 접속하므로 `http://localhost:3300`으로 설정되어 있습니다. |
 | `TD_FAKE_GATEWAY` | 없음 | `1`이면 데모 모드: 모델 호출 없이 한국어 예시 응답으로 화면 전체를 눌러 볼 수 있습니다. 역량 체계가 비어 있으면 시드를 자동으로 적재합니다. |
 | `TD_FAKE_DELAY` | `0.6` | 데모 모드에서 모델 호출 1회당 지연(초). 진행 화면을 보기 좋게 합니다. |
@@ -97,7 +97,7 @@ task-design batch my.json --author 1                  # 작성자를 1번 담당
 - 조합마다 생성 → 상황 후보 자동 선택 → 모의 응시·판정·자기 수정까지 끝까지 돌리고, 초안을 **검토 대기**로 남깁니다. 작성자는 기본으로 두 담당자를 번갈아 배정하므로, 각자 상대의 초안을 검토하면 됩니다.
 - **검토 라벨은 자동으로 붙이지 않습니다** (ADR 0002). 성공 기준이 "사람이 다시 쓰지 않아도 되는가"이기 때문에, 라벨은 반드시 사람이 화면에서 붙입니다.
 - 실패한 조합이 있어도 나머지는 계속 돌고, 마지막에 요약을 보여 줍니다. 모든 초안이 검토 대기에 도달하면 종료 코드 0, 하나라도 실패하면 1, 입력 파일·역량·API 키 문제면 2입니다. 역량은 실행 전에 한꺼번에 확인하므로, 없는 역량이 있으면 아무 초안도 만들지 않고 멈춥니다.
-- 비용·시간: 초안 하나가 최대 4회차(1회차 + 수정 3번) × (페르소나 3 + 채점 9 + 수정 1)번가량 호출합니다. 12개 조합이면 수십 분이 걸릴 수 있습니다. 모든 호출의 토큰과 추정 비용은 `model_costs` 테이블과 Langfuse(초안 id = trace id)에 남습니다.
+- 비용·시간: 초안 하나가 최대 4회차(1회차 + 수정 3번) × (페르소나 3 + 채점 9 + 수정 1)번가량 호출합니다. 12개 조합이면 수십 분이 걸릴 수 있습니다. 모든 호출의 토큰과 추정 비용은 `model_costs` 테이블과 Langfuse(초안 id = 세션 id, 그래프 실행마다 trace 하나)에 남습니다.
 - compose 환경에서는 `docker compose exec app task-design batch examples/batch.json`으로 실행합니다.
 
 ## 시연 런북
@@ -108,7 +108,7 @@ task-design batch my.json --author 1                  # 작성자를 1번 담당
 4. 화면에서 담당자를 바꿔 가며 상대가 작성한 초안을 검토합니다. 상황·지시문·채점 기준마다 검토 라벨(유지 / 부분 수정 / 전면 재작성)을 붙이고 확정 또는 반려합니다.
 5. 실시간 흐름 시연: 화면에서 새 초안을 입력 → 상황 후보 3개 중 선택 → 진행 화면에서 단계·페르소나 상태 확인 → 검토.
 6. 대시보드에서 기간별 지표(전면 재작성 없이 통과한 비율, 작업 시간, 비용)를 확인합니다.
-7. Langfuse(http://localhost:3300)에서 초안 id로 trace를 열어 역할별 호출, 토큰, 비용을 봅니다.
+7. Langfuse(http://localhost:3300)의 Sessions에서 초안 id로 세션을 열면 실행(start·regenerate·select·retry)마다 trace가 있고, 노드별 호출과 토큰, 비용을 볼 수 있습니다.
 8. 확정한 과제가 다음 초안의 유사 과제 검색에 나오는지 확인합니다.
 
 ## 테스트

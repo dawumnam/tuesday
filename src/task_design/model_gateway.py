@@ -17,7 +17,7 @@ from pydantic import BaseModel, ValidationError
 from task_design.gateway import Message, Role, Usage, UsageSink, Vector
 from task_design.providers import Completion, GeminiProvider, ProviderClient
 from task_design.settings import Provider, RoleConfig, Settings
-from task_design.tracing import CallRecord, NoopTracer, Tracer, make_tracer
+from task_design.tracing import CallRecord, NoopTracer, Tracer, current_scope, make_tracer
 
 
 class InvalidModelOutput(Exception):
@@ -204,6 +204,7 @@ class RoutedGateway:
             cost_usd=usage.estimated_cost_usd if usage else 0.0,
             error=f"{type(error).__name__}: {error}" if error else None,
             parameters={"thinking": config.thinking.value, "max_output_tokens": config.max_output_tokens},
+            scope=current_scope(),
         )
 
 

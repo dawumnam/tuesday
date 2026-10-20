@@ -192,7 +192,7 @@ def test_costs_sum_every_model_call_of_drafts_created_in_the_period_with_a_trace
         assert cost.calls == len(calls) > 0
         assert cost.input_tokens + cost.output_tokens == fake.total_tokens(draft_id)
         assert cost.estimated_cost_usd == pytest.approx(fake.total_tokens(draft_id))
-        assert cost.trace_url == f"https://lf.example/project/proj-1/traces/{draft_id}"
+        assert cost.trace_url == f"https://lf.example/project/proj-1/sessions/{draft_id}"
     assert m.total_calls == sum(c.calls for c in by_id.values())
     assert m.total_cost_usd == pytest.approx(
         fake.total_tokens(reviewed_draft.id) + fake.total_tokens(unreviewed.id))

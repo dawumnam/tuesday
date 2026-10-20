@@ -35,6 +35,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 
+from task_design import tracing
 from task_design.domain import DraftInput, DraftState, Stage
 from task_design.workflow.errors import error_kind_of
 from task_design.workflow.nodes import fix, generation, mock_exam, scenarios
@@ -106,7 +107,8 @@ def _bind(deps: Deps, spec: NodeSpec) -> Callable[[WorkflowState], dict[str, Any
     def node(state: WorkflowState) -> dict[str, Any]:
         if spec.stage is not None:
             deps.drafts.set_stage(draft_id(state), spec.stage)
-        return spec.fn(deps, state)
+        with tracing.node_scope(spec.name):  # names this node's model calls in Langfuse
+            return spec.fn(deps, state)
 
     node.__name__ = spec.name
     return node
@@ -160,10 +162,12 @@ class Workflow:
         self._graph = build_graph(deps, PostgresSaver(deps.db.autocommit_pool))
 
     def start(self, draft_id: UUID, input: DraftInput) -> None:
-        self._run(draft_id, {"draft_id": str(draft_id), "input": input.model_dump(mode="json")})
+        with tracing.run_scope("start"):
+            self._start(draft_id, input)
 
     def resume(self, draft_id: UUID, value: dict[str, Any]) -> None:
-        self._run(draft_id, Command(resume=value))
+        with tracing.run_scope(value["action"]):  # "regenerate" | "select"
+            self._run(draft_id, Command(resume=value))
 
     def retry(self, draft_id: UUID) -> None:
         """Re-run a failed run from its last checkpoint (finished parallel tasks are kept).
@@ -173,21 +177,28 @@ class Workflow:
         still waits at the 상황 선택 interrupt it re-delivers what the draft's state says
         was asked for (the stored selection, or a regeneration).
         """
+        with tracing.run_scope("retry"):
+            self._retry(draft_id)
+
+    def _retry(self, draft_id: UUID) -> None:
         config = {"configurable": {"thread_id": str(draft_id)}}
         snapshot = self._graph.get_state(config)
         if not snapshot.values:
-            self.start(draft_id, self._deps.drafts.get(draft_id).input)
+            self._start(draft_id, self._deps.drafts.get(draft_id).input)
             return
         if snapshot.interrupts:
             draft = self._deps.drafts.get(draft_id)
             if draft.state is DraftState.VERIFYING and draft.selected_candidate_id:
-                self.resume(draft_id, {"action": "select",
-                                       "candidate_id": str(draft.selected_candidate_id)})
+                self._run(draft_id, Command(resume={
+                    "action": "select", "candidate_id": str(draft.selected_candidate_id)}))
                 return
             if draft.state is DraftState.GENERATING:
-                self.resume(draft_id, {"action": "regenerate"})
+                self._run(draft_id, Command(resume={"action": "regenerate"}))
                 return
         self._run(draft_id, None)
+
+    def _start(self, draft_id: UUID, input: DraftInput) -> None:
+        self._run(draft_id, {"draft_id": str(draft_id), "input": input.model_dump(mode="json")})
 
     def _run(self, draft_id: UUID, payload: Any) -> None:
         config = {"configurable": {"thread_id": str(draft_id)}}
