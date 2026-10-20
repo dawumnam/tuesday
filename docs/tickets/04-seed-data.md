@@ -1,6 +1,7 @@
 ---
-status: open
+status: closed
 blocked-by: [03]
+closed-by: 94c370b
 ---
 # 04 Synthetic seed data
 
