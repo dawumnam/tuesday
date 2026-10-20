@@ -109,8 +109,18 @@ class TaskDesignService:
         return self._drafts.get(draft_id)
 
     def select_scenario(self, draft_id: UUID, candidate_id: UUID) -> Draft:
-        """Generate, mock-exam and self-correct; state → 검토 대기. (tickets 06, 07)"""
-        raise NotImplementedError
+        """Generate, mock-exam and self-correct; state 검증 중 → 검토 대기. (tickets 06, 07)
+
+        Raises ``InvalidDraftState`` unless the draft is in 상황 선택 대기, and
+        ``UnknownCandidate`` unless ``candidate_id`` is one of its current 상황 후보.
+        """
+        self._drafts.select_candidate(draft_id, candidate_id)
+        self._run_graph(
+            lambda: self._workflow.resume(
+                draft_id, {"action": "select", "candidate_id": str(candidate_id)}
+            )
+        )
+        return self.get_draft(draft_id)
 
     def review(
         self,

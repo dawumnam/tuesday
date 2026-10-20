@@ -37,6 +37,10 @@ class InvalidDraftState(RuntimeError):
     """The operation is not allowed in the draft's current state."""
 
 
+class UnknownCandidate(LookupError):
+    """The 상황 후보 is not among the draft's current candidates."""
+
+
 def _dump(adapter: TypeAdapter, value: object) -> str:
     return adapter.dump_json(value).decode()
 
@@ -89,6 +93,33 @@ class DraftStore:
             raise InvalidDraftState(
                 f"draft {draft_id} is {draft.state.ko}, expected {expected.ko}"
             )
+
+    def select_candidate(self, draft_id: UUID, candidate_id: UUID) -> None:
+        """상황 선택 대기 → 검증 중, recording the chosen 상황 후보, in one statement.
+
+        The candidate must be among the current candidates (checked atomically,
+        so a concurrent regeneration can't slip a stale id through). Raises
+        ``InvalidDraftState`` or ``UnknownCandidate``.
+        """
+        with self._db.connection() as conn:
+            cur = conn.execute(
+                "UPDATE drafts SET state = %s, selected_candidate_id = %s, error = NULL, "
+                "updated_at = now() "
+                "WHERE id = %s AND state = %s "
+                "AND candidates @> jsonb_build_array(jsonb_build_object('id', %s::text))",
+                (DraftState.VERIFYING.value, candidate_id, draft_id,
+                 DraftState.AWAITING_SCENARIO_SELECTION.value, str(candidate_id)),
+            )
+            updated = cur.rowcount
+        if updated:
+            return
+        draft = self.get(draft_id)
+        if draft.state is not DraftState.AWAITING_SCENARIO_SELECTION:
+            raise InvalidDraftState(
+                f"draft {draft_id} is {draft.state.ko}, "
+                f"expected {DraftState.AWAITING_SCENARIO_SELECTION.ko}"
+            )
+        raise UnknownCandidate(f"{candidate_id} is not a current 상황 후보 of draft {draft_id}")
 
     def set_state(self, draft_id: UUID, state: DraftState) -> None:
         self._update(draft_id, "state = %s, stage = NULL", state.value)
