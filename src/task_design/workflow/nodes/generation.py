@@ -113,6 +113,26 @@ def write_rubric_model(
     return result.to_rubric()
 
 
+def write_attachment_models(
+    deps: Deps,
+    state: WorkflowState,
+    *,
+    instruction: str,
+    previous: Sequence[Attachment] = (),
+    issues: Sequence[str] = (),
+) -> list[Attachment]:
+    """첨부 자료 with marked 함정; ``previous`` + ``issues`` rewrites existing ones."""
+    input = draft_input(state)
+    batch = deps.gateway.complete(
+        Role.GENERATION,
+        prompts.attachments(input, _competencies(deps, input), state["scenario"], instruction,
+                            previous=previous, issues=issues),
+        schema=AttachmentBatch,
+        draft_id=draft_id(state),
+    )
+    return list(batch.attachments)
+
+
 # --- nodes -------------------------------------------------------------------
 
 
@@ -124,15 +144,8 @@ def write_instruction(deps: Deps, state: WorkflowState) -> dict[str, Any]:
 
 
 def write_attachments(deps: Deps, state: WorkflowState) -> dict[str, Any]:
-    input = draft_input(state)
-    batch = deps.gateway.complete(
-        Role.GENERATION,
-        prompts.attachments(input, _competencies(deps, input), state["scenario"],
-                            state["instruction"]),
-        schema=AttachmentBatch,
-        draft_id=draft_id(state),
-    )
-    return {"attachments": [dump(a) for a in batch.attachments]}
+    attachments = write_attachment_models(deps, state, instruction=state["instruction"])
+    return {"attachments": [dump(a) for a in attachments]}
 
 
 def write_rubric(deps: Deps, state: WorkflowState) -> dict[str, Any]:

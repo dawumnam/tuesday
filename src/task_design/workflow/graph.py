@@ -7,13 +7,13 @@ Graph::
     write_instruction → write_attachments → write_rubric → review_task
       → start_mock_exam ══Send×3══▶ run_persona (상·중·하 in parallel)
       → start_grading   ══Send×9══▶ grade_submission (3 per submission, in parallel)
-      → judge ── VERDICT EDGE (route_after_verdict / VERDICT_ROUTES) ──▶ finish → END
+      → judge ── VERDICT EDGE (fix.route_after_verdict / VERDICT_ROUTES) ─┬─ finish → END
+                                                                          └─ fix → start_mock_exam
 
-The verdict edge is the one place ticket 07 reroutes: make
-``mock_exam.route_after_verdict`` return "fix" while the loop may continue and
-add ``"fix": N.<fix node>`` to ``VERDICT_ROUTES``. A fix node updates ``task``,
-bumps ``round``, sets ``round_changes``, and edges back to
-``N.START_MOCK_EXAM``.
+자기 수정 루프: while the verdict fails and rounds (``settings.max_rounds``) and
+the draft's token budget remain, ``fix`` regenerates one component, bumps
+``round`` and sets ``round_changes``; ``judge`` records the new round. ``finish``
+attaches the 실패 리포트 when the loop stopped while still failing.
 
 Each node is ``fn(deps, state) -> partial state``; when the spec has a
 ``stage``, the draft's ``stage`` column is set before the node runs.
@@ -34,7 +34,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 
 from task_design.domain import DraftInput, DraftState, Stage
-from task_design.workflow.nodes import generation, mock_exam, scenarios
+from task_design.workflow.nodes import fix, generation, mock_exam, scenarios
 from task_design.workflow.state import Deps, WorkflowState, draft_id
 
 log = logging.getLogger(__name__)
@@ -57,15 +57,16 @@ class N:
     START_GRADING = "start_grading"
     GRADE_SUBMISSION = mock_exam.GRADE_SUBMISSION
     JUDGE = "judge"
+    FIX = "fix"
     FINISH = "finish"
 
 
 # First node after the human picks a 상황 후보.
 AFTER_SELECTION = N.WRITE_INSTRUCTION
 
-# THE VERDICT EDGE: route_after_verdict's return value → next node.
-# Ticket 06 always finishes (검토 대기). Ticket 07 adds the fix loop here.
-VERDICT_ROUTES: dict[str, str] = {"finish": N.FINISH}
+# THE VERDICT EDGE: fix.route_after_verdict's return value → next node.
+# "fix" regenerates one component and re-runs the 모의 응시 (자기 수정 루프).
+VERDICT_ROUTES: dict[str, str] = {fix.FINISH: N.FINISH, fix.FIX: N.FIX}
 
 
 @dataclass(frozen=True)
@@ -91,7 +92,8 @@ def _node_specs() -> list[NodeSpec]:
         NodeSpec(N.START_GRADING, mock_exam.start_grading, Stage.GRADING),
         NodeSpec(N.GRADE_SUBMISSION, mock_exam.grade_submission, Stage.GRADING),
         NodeSpec(N.JUDGE, mock_exam.judge, Stage.JUDGING),
-        NodeSpec(N.FINISH, mock_exam.finish),
+        NodeSpec(N.FIX, fix.fix, Stage.FIXING),
+        NodeSpec(N.FINISH, fix.finish),
     ]
 
 
@@ -130,7 +132,9 @@ def build_graph(deps: Deps, checkpointer: PostgresSaver | None) -> CompiledState
         [N.GRADE_SUBMISSION],
     )
     g.add_edge(N.GRADE_SUBMISSION, N.JUDGE)
-    g.add_conditional_edges(N.JUDGE, mock_exam.route_after_verdict, VERDICT_ROUTES)  # VERDICT EDGE
+    g.add_conditional_edges(  # VERDICT EDGE
+        N.JUDGE, functools.partial(fix.route_after_verdict, deps=deps), VERDICT_ROUTES)
+    g.add_edge(N.FIX, N.START_MOCK_EXAM)
     g.add_edge(N.FINISH, END)
     return g.compile(checkpointer=checkpointer)
 
