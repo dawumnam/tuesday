@@ -103,9 +103,11 @@ class GeminiProvider:
         return Completion(text=response.text or "", input_tokens=input_tokens, output_tokens=output_tokens)
 
     def embed(self, config: RoleConfig, texts: Sequence[str], dim: int) -> Embeddings:
+        # One Content per text: for gemini-embedding-2 the SDK folds a bare list of
+        # strings into a single multi-part Content, which yields ONE aggregated vector.
         response = self._client.models.embed_content(
             model=config.model,
-            contents=list(texts),
+            contents=[types.Content(role="user", parts=[types.Part(text=t)]) for t in texts],
             config=types.EmbedContentConfig(output_dimensionality=dim),
         )
         vectors = [_normalize(e.values or []) for e in response.embeddings or []]

@@ -114,6 +114,46 @@ def test_tokens_calls_and_cost_accumulate_per_draft_and_role(settings, db):
     assert [c.calls for c in costs.for_draft(other)] == [1]
 
 
+def test_embeddings_use_the_embedding_model_at_the_configured_dimension(settings, db):
+    stub = GeminiStub()
+    costs = CostStore(db)
+    gateway = gateway_for(settings, stub, usage_sink=costs)
+    draft = uuid4()
+
+    vectors = gateway.embed(["상황 하나", "상황 둘"], draft_id=draft)
+
+    (request,) = stub.requests
+    assert (request.model, request.method) == ("gemini-embedding-2", "batchEmbedContents")
+    assert len(vectors) == 2
+    for v in vectors:
+        assert len(v) == settings.embedding_dim
+        assert sum(x * x for x in v) == pytest.approx(1.0)
+    assert vectors[0] != vectors[1]
+    (cost,) = costs.for_draft(draft)
+    assert (cost.role, cost.calls) == ("embedding", 1)
+    assert cost.input_tokens > 0
+
+
+def test_rerank_asks_the_rerank_model_and_returns_its_order(settings):
+    stub = GeminiStub().reply('{"order": [2, 0, 1]}')
+    gateway = gateway_for(settings, stub)
+    docs = ["회계 과제", "마케팅 과제", "재무 분석 과제"]
+
+    assert gateway.rerank("재무 데이터 검증", docs) == [2, 0, 1]
+
+    (request,) = stub.requests
+    prompt = "\n".join(request.texts)
+    assert "재무 데이터 검증" in prompt and all(d in prompt for d in docs)
+    assert request.thinking_level == "high"
+
+
+def test_rerank_always_returns_a_permutation_of_the_docs(settings):
+    stub = GeminiStub().reply('{"order": [1, 1, 7]}')
+    gateway = gateway_for(settings, stub)
+
+    assert gateway.rerank("q", ["a", "b", "c"]) == [1, 0, 2]
+
+
 def test_default_price_table_covers_the_default_models():
     s = Settings(_env_file=None)
     for role in Role:
