@@ -1,6 +1,7 @@
 ---
-status: open
+status: closed
 blocked-by: [08]
+closed-by: 72b0b9a
 ---
 # 09 Measurement & metrics
 

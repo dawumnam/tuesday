@@ -455,12 +455,50 @@ class Cost(BaseModel):
     estimated_cost_usd: float
 
 
+class DraftWorkTime(BaseModel):
+    """총 작업 시간 of one reviewed draft (minutes). Human and agent time are each the
+    union of that draft's intervals, so overlapping intervals count once."""
+
+    draft_id: UUID
+    decision: ReviewDecision
+    passed: bool  # 확정 with no 전면 재작성 label
+    reviewed_at: datetime
+    human_minutes: float
+    agent_minutes: float
+    total_minutes: float
+    trace_url: str | None  # Langfuse trace of the draft (None if not configured)
+
+
+class DraftCost(BaseModel):
+    """비용 of one draft over all its model calls."""
+
+    draft_id: UUID
+    created_at: datetime
+    calls: int
+    input_tokens: int
+    output_tokens: int
+    estimated_cost_usd: float
+    trace_url: str | None
+
+
 class Metrics(BaseModel):
-    """Dashboard metrics for a period. Ticket 09 may extend."""
+    """Dashboard metrics for a period (see ``TaskDesignService.metrics`` for the rules)."""
 
     period: Interval
+    # 성공 기준 1: 전면 재작성 없이 통과한 비율 (over drafts reviewed in the period)
     reviewed_drafts: int
-    pass_without_full_rewrite_ratio: float | None
+    passed_drafts: int
+    pass_without_full_rewrite_ratio: float | None  # None when nothing was reviewed
+    pass_ratio_target: float
+    meets_pass_ratio_target: bool | None
+    # 성공 기준 2: 과제 1개당 총 작업 시간 (same drafts)
     mean_total_work_minutes: float | None
+    work_minutes_target: float
+    meets_work_minutes_target: bool | None
+    work_times: list[DraftWorkTime]  # one per reviewed draft, by reviewed_at
     label_distribution: dict[Component, dict[ReviewLabel, int]]
-    costs: list[Cost]
+    # 비용: drafts created in the period
+    costs: list[Cost]  # per draft per role
+    draft_costs: list[DraftCost]  # per draft, by created_at
+    total_calls: int
+    total_cost_usd: float
