@@ -160,7 +160,27 @@ class Workflow:
         self._run(draft_id, Command(resume=value))
 
     def retry(self, draft_id: UUID) -> None:
-        """Re-run a failed run from its last checkpoint (finished parallel tasks are kept)."""
+        """Re-run a failed run from its last checkpoint (finished parallel tasks are kept).
+
+        Also recovers a run that never got going because the process died first: with
+        no checkpoint at all it starts over from the draft's input, and when the graph
+        still waits at the 상황 선택 interrupt it re-delivers what the draft's state says
+        was asked for (the stored selection, or a regeneration).
+        """
+        config = {"configurable": {"thread_id": str(draft_id)}}
+        snapshot = self._graph.get_state(config)
+        if not snapshot.values:
+            self.start(draft_id, self._deps.drafts.get(draft_id).input)
+            return
+        if snapshot.interrupts:
+            draft = self._deps.drafts.get(draft_id)
+            if draft.state is DraftState.VERIFYING and draft.selected_candidate_id:
+                self.resume(draft_id, {"action": "select",
+                                       "candidate_id": str(draft.selected_candidate_id)})
+                return
+            if draft.state is DraftState.GENERATING:
+                self.resume(draft_id, {"action": "regenerate"})
+                return
         self._run(draft_id, None)
 
     def _run(self, draft_id: UUID, payload: Any) -> None:

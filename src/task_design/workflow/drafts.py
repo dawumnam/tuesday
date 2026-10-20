@@ -266,6 +266,16 @@ class DraftStore:
             self.get(draft_id)  # raises DraftNotFound
             raise InvalidDraftState("실패한 실행이 없어 다시 시도할 수 없습니다.")
 
+    def mark_interrupted(self, message: str) -> list[UUID]:
+        """Give every draft left running (생성 중 / 검증 중, no error) the error ``message``."""
+        with self._db.connection() as conn:
+            rows = conn.execute(
+                "UPDATE drafts SET error = %s, stage = NULL, updated_at = now() "
+                "WHERE state = ANY(%s) AND error IS NULL RETURNING id",
+                (message, [DraftState.GENERATING.value, DraftState.VERIFYING.value]),
+            ).fetchall()
+        return [r[0] for r in rows]
+
     def set_state(self, draft_id: UUID, state: DraftState) -> None:
         self._update(draft_id, "state = %s, stage = NULL", state.value)
 

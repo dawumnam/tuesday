@@ -72,3 +72,17 @@ def test_each_call_of_a_draft_is_a_generation_under_that_drafts_trace(settings):
     assert first["usage"]["totalCost"] > 0
     assert first["startTime"] <= first["endTime"]
     assert second["name"] == "examinee"
+
+
+def test_trace_links_use_the_public_host_when_the_app_reaches_langfuse_internally():
+    from task_design.settings import Settings
+    from task_design.tracing import trace_url
+
+    draft_id = uuid4()
+    settings = Settings(_env_file=None, langfuse_host="http://langfuse:3000",
+                        langfuse_public_host="http://localhost:3300",
+                        langfuse_project_id="task-design")
+
+    assert trace_url(settings, draft_id) == (
+        f"http://localhost:3300/project/task-design/traces/{draft_id}"
+    )

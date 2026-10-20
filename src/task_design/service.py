@@ -47,6 +47,10 @@ def _run_inline(job: Callable[[], None]) -> None:
     job()
 
 
+# Draft.error of a run cut off by a restart (see ``recover_interrupted_runs``).
+INTERRUPTED_RUN_ERROR = "Interrupted: 앱이 다시 시작되어 진행 중이던 실행이 중단되었습니다."
+
+
 class InvalidDraftInput(ValueError):
     """The 초안 input breaks a rule (1–2 distinct 역량, 대상자 직무·경력 수준, 난이도).
 
@@ -234,6 +238,15 @@ class TaskDesignService:
         self._drafts.claim_retry(draft_id)
         self._execute(draft_id, lambda: self._workflow.retry(draft_id))
         return self.get_draft(draft_id)
+
+    def recover_interrupted_runs(self) -> list[UUID]:
+        """Mark runs cut off by a process restart as failed, so ``retry`` can resume them.
+
+        Call once at app start-up, before any run is handed to ``run_graph``: every
+        draft still in 생성 중 / 검증 중 without an error can only be one whose
+        background job died with the previous process. Returns their ids.
+        """
+        return self._drafts.mark_interrupted(INTERRUPTED_RUN_ERROR)
 
     def review(
         self,

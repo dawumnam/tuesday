@@ -126,6 +126,10 @@ class Settings(BaseSettings):
     langfuse_secret_key: str | None = None
     # Langfuse project id (from the project URL), for per-draft trace links in metrics.
     langfuse_project_id: str | None = None
+    # Langfuse address as the *browser* sees it, for trace links (TD_LANGFUSE_PUBLIC_HOST).
+    # Defaults to langfuse_host; set it when the app reaches Langfuse on an internal host
+    # (compose: langfuse_host=http://langfuse:3000, public host http://localhost:3300).
+    langfuse_public_host: str | None = None
 
     def route(self, role: Role) -> RoleConfig:
         """Effective config for a role, after applying the `use_local_llm` switch."""
