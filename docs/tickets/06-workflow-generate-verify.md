@@ -1,6 +1,7 @@
 ---
-status: open
+status: closed
 blocked-by: [05]
+closed-by: d7735f1
 ---
 # 06 Workflow part 2 — select_scenario happy path
 
