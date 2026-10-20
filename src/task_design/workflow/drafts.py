@@ -7,6 +7,7 @@ its own, so a ``get_draft`` from another thread sees progress live.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from uuid import UUID
 
 from pydantic import TypeAdapter
@@ -20,6 +21,8 @@ from task_design.domain import (
     FailureReport,
     Level,
     PersonaStatus,
+    Review,
+    ReviewDecision,
     ScenarioCandidate,
     Stage,
     Task,
@@ -52,6 +55,26 @@ class UnknownCandidate(LookupError):
     """The 상황 후보 is not among the draft's current candidates."""
 
 
+def _load_review(conn, draft_id: UUID) -> Review | None:
+    row = conn.execute(
+        "SELECT reviewer_id, decision, edited_task, reviewed_at FROM reviews WHERE draft_id = %s",
+        (draft_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    labels = conn.execute(
+        "SELECT component, label FROM review_labels WHERE draft_id = %s", (draft_id,)
+    ).fetchall()
+    reviewer_id, decision, edited_task, reviewed_at = row
+    return Review(
+        reviewer_id=reviewer_id,
+        labels=dict(labels),
+        decision=ReviewDecision(decision),
+        edited_task=Task.model_validate(edited_task) if edited_task is not None else None,
+        reviewed_at=reviewed_at,
+    )
+
+
 def _dump(adapter: TypeAdapter, value: object) -> str:
     return adapter.dump_json(value).decode()
 
@@ -72,6 +95,7 @@ class DraftStore:
             row = conn.execute(
                 f"SELECT {_COLUMNS} FROM drafts WHERE id = %s", (draft_id,)
             ).fetchone()
+            review = _load_review(conn, draft_id) if row is not None else None
         if row is None:
             raise DraftNotFound("초안을 찾을 수 없습니다.")
         (id_, author, input_, state, stage, similar, candidates, selected, error, created,
@@ -92,6 +116,7 @@ class DraftStore:
             failure_report=(
                 FailureReport.model_validate(failure_report) if failure_report is not None else None
             ),
+            review=review,
             created_at=created,
             updated_at=updated,
         )
@@ -138,6 +163,49 @@ class DraftStore:
                 f"'{DraftState.AWAITING_SCENARIO_SELECTION.ko}' 상태에서만 가능합니다."
             )
         raise UnknownCandidate("현재 제시된 상황 후보가 아닙니다. 후보 목록을 새로 불러와 다시 고르세요.")
+
+    def save_review(
+        self, draft_id: UUID, review: Review, *, confirm: Callable[[], UUID] | None = None
+    ) -> None:
+        """검토 대기 → 확정 | 반려, storing the 최종 검토 and its 검토 라벨, atomically.
+
+        The draft row is locked for the whole operation, so of two concurrent
+        reviews exactly one wins and the other raises ``InvalidDraftState``.
+        ``confirm`` (확정 only) runs under that lock, before anything is
+        written, and returns the 확정 과제 id; if it raises, nothing is stored.
+        """
+        new_state = (
+            DraftState.CONFIRMED if review.decision is ReviewDecision.CONFIRM
+            else DraftState.REJECTED
+        )
+        with self._db.connection() as conn:
+            row = conn.execute(
+                "SELECT state FROM drafts WHERE id = %s FOR UPDATE", (draft_id,)
+            ).fetchone()
+            if row is None:
+                raise DraftNotFound("초안을 찾을 수 없습니다.")
+            state = DraftState(row[0])
+            if state is not DraftState.AWAITING_REVIEW:
+                raise InvalidDraftState(
+                    f"초안이 '{state.ko}' 상태라 검토할 수 없습니다. "
+                    f"'{DraftState.AWAITING_REVIEW.ko}' 상태에서만 가능합니다."
+                )
+            task_id = confirm() if confirm is not None else None
+            conn.execute(
+                "INSERT INTO reviews (draft_id, reviewer_id, decision, edited_task, task_id) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (draft_id, review.reviewer_id, review.decision.value,
+                 review.edited_task.model_dump_json() if review.edited_task else None, task_id),
+            )
+            with conn.cursor() as cur:
+                cur.executemany(
+                    "INSERT INTO review_labels (draft_id, component, label) VALUES (%s, %s, %s)",
+                    [(draft_id, c.value, label.value) for c, label in review.labels.items()],
+                )
+            conn.execute(
+                "UPDATE drafts SET state = %s, stage = NULL, updated_at = now() WHERE id = %s",
+                (new_state.value, draft_id),
+            )
 
     def claim_retry(self, draft_id: UUID) -> None:
         """Clear the error of a failed run so it can be retried; atomic, so one retry wins.

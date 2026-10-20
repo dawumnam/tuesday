@@ -1,6 +1,7 @@
 ---
-status: open
+status: closed
 blocked-by: [06]
+closed-by: db0363a
 ---
 # 08 Final review
 
