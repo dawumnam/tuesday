@@ -35,7 +35,7 @@ def _run_inline(job: Callable[[], None]) -> None:
 
 
 class UnknownCompetency(ValueError):
-    """A competency id that is not in the 역량 체계."""
+    """A competency id that is not in the 역량 체계. (Message is Korean, shown in the UI.)"""
 
 
 class TaskDesignService:
@@ -83,7 +83,7 @@ class TaskDesignService:
         known = {c.id for c in self._competencies.list()}
         unknown = [cid for cid in input.competency_ids if cid not in known]
         if unknown:
-            raise UnknownCompetency(f"not in the 역량 체계: {', '.join(unknown)}")
+            raise UnknownCompetency(f"역량 체계에 없는 역량입니다: {', '.join(unknown)}")
         draft_id = uuid4()
         self._drafts.create(draft_id, author_id, input)
         self._run_graph(lambda: self._workflow.start(draft_id, input))

@@ -36,8 +36,12 @@ _ROUNDS = TypeAdapter(list[DraftRound])
 _PERSONA_STATUS = TypeAdapter(dict[Level, PersonaStatus])
 
 
+# Exception messages are Korean: the UI shows them as-is (ticket 10). Tests
+# assert on the exception type, never on the text.
+
+
 class DraftNotFound(LookupError):
-    pass
+    """No draft with that id."""
 
 
 class InvalidDraftState(RuntimeError):
@@ -69,7 +73,7 @@ class DraftStore:
                 f"SELECT {_COLUMNS} FROM drafts WHERE id = %s", (draft_id,)
             ).fetchone()
         if row is None:
-            raise DraftNotFound(f"no draft {draft_id}")
+            raise DraftNotFound("초안을 찾을 수 없습니다.")
         (id_, author, input_, state, stage, similar, candidates, selected, error, created,
          updated, task, rounds, persona_status, failure_report) = row
         return Draft(
@@ -104,7 +108,8 @@ class DraftStore:
         if not updated:
             draft = self.get(draft_id)  # raises DraftNotFound
             raise InvalidDraftState(
-                f"draft {draft_id} is {draft.state.ko}, expected {expected.ko}"
+                f"초안이 '{draft.state.ko}' 상태라 할 수 없습니다. '{expected.ko}' 상태에서만 "
+                "가능합니다."
             )
 
     def select_candidate(self, draft_id: UUID, candidate_id: UUID) -> None:
@@ -129,10 +134,10 @@ class DraftStore:
         draft = self.get(draft_id)
         if draft.state is not DraftState.AWAITING_SCENARIO_SELECTION:
             raise InvalidDraftState(
-                f"draft {draft_id} is {draft.state.ko}, "
-                f"expected {DraftState.AWAITING_SCENARIO_SELECTION.ko}"
+                f"초안이 '{draft.state.ko}' 상태라 상황을 고를 수 없습니다. "
+                f"'{DraftState.AWAITING_SCENARIO_SELECTION.ko}' 상태에서만 가능합니다."
             )
-        raise UnknownCandidate(f"{candidate_id} is not a current 상황 후보 of draft {draft_id}")
+        raise UnknownCandidate("현재 제시된 상황 후보가 아닙니다. 후보 목록을 새로 불러와 다시 고르세요.")
 
     def claim_retry(self, draft_id: UUID) -> None:
         """Clear the error of a failed run so it can be retried; atomic, so one retry wins.
@@ -174,7 +179,7 @@ class DraftStore:
                 "SELECT rounds FROM drafts WHERE id = %s FOR UPDATE", (draft_id,)
             ).fetchone()
             if row is None:
-                raise DraftNotFound(f"no draft {draft_id}")
+                raise DraftNotFound("초안을 찾을 수 없습니다.")
             rounds = [r for r in _ROUNDS.validate_python(row[0]) if r.number != round.number]
             rounds = sorted([*rounds, round], key=lambda r: r.number)
             conn.execute(
