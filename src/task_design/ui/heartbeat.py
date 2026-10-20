@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -107,6 +108,9 @@ class HeartbeatLedger:
 
     acked: int = 0
     pending: list[dict[str, str]] = field(default_factory=list)
+    # The draft the 입력 폼 last created, and when: a form segment that started before
+    # then but arrives later (the browser closes it on the screen switch) goes to it.
+    started: tuple[UUID, datetime] | None = None
 
     def receive(self, service: Any, *, staff_id: int, payload: Any) -> int:
         """Record the beats in ``payload`` (once each); returns the seq to acknowledge."""
@@ -121,7 +125,11 @@ class HeartbeatLedger:
             interval = {"start": beat.get("start"), "end": beat.get("end")}
             context = beat.get("context") or ""
             if not context:
-                self.pending.append(interval)
+                began = _parse(interval["start"])
+                if self.started is not None and began is not None and began <= self.started[1]:
+                    self._record(service, str(self.started[0]), staff_id, interval)
+                else:
+                    self.pending.append(interval)
                 continue
             self._record(service, context, staff_id, interval)
         return self.acked
@@ -129,6 +137,7 @@ class HeartbeatLedger:
     def credit_pending(self, service: Any, draft_id: UUID, *, staff_id: int) -> None:
         """Credit 입력 폼 time measured before the draft existed to ``draft_id``."""
         pending, self.pending = self.pending, []
+        self.started = (draft_id, datetime.now(UTC))
         for interval in pending:
             self._record(service, str(draft_id), staff_id, interval)
 
@@ -138,6 +147,13 @@ class HeartbeatLedger:
             service.record_activity(UUID(context), staff_id, interval)
         except Exception:  # a bad beat must never break the page
             log.warning("dropped heartbeat for %s: %s", context, interval, exc_info=True)
+
+
+def _parse(value: Any) -> datetime | None:
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 _component = None

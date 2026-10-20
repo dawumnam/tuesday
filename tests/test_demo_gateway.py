@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 from task_design.costs import CostStore
-from task_design.demo import FAIL_MARKER, build_demo_gateway
+from task_design.demo import FAIL_MARKER, build_demo_gateway, theme_of
 from task_design.domain import DraftState, Level
 from task_design.service import TaskDesignService
 from task_design.testing.workflow import ensure_competencies, make_input, seed_similar_tasks
@@ -71,3 +71,18 @@ def test_demo_fail_marker_in_the_memo_ends_with_a_failure_report(db, settings):
     assert done.state is DraftState.AWAITING_REVIEW
     assert len(done.rounds) == settings.max_rounds
     assert done.failure_report is not None
+
+
+def test_demo_attachments_and_submissions_fit_the_chosen_scenario(db, settings):
+    service = _service(db, settings)
+    draft = service.start(make_input(), author_id=1)
+    chosen = draft.candidates[2]
+    theme = theme_of(chosen.scenario)
+
+    done = service.select_scenario(draft.id, chosen.id)
+
+    assert theme.csv_name in done.task.instruction
+    assert [a.filename for a in done.task.attachments] == [theme.csv_name, theme.memo_name]
+    high = next(r for r in done.rounds[0].mock_exam_results if r.persona_level is Level.HIGH)
+    assert theme.deliverable in high.output
+    assert theme.header in high.transcript[1].content  # the AI 도구 read this theme's CSV

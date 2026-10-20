@@ -82,3 +82,23 @@ def test_bad_beats_are_dropped_without_breaking_the_page(service):
     ]})
 
     assert acked == 7
+
+
+def test_form_time_reported_after_the_draft_was_created_still_goes_to_that_draft(
+    service, fake_gateway, db, settings
+):
+    # The browser closes the 입력 폼 segment only when the screen switches to the new
+    # draft, i.e. after 시작 already credited what was pending.
+    ledger = HeartbeatLedger()
+    install_verification(fake_gateway)
+    form_opened = datetime.now(UTC) - timedelta(minutes=3)
+    draft = start_awaiting_selection(service, fake_gateway, db, settings, author_id=1)
+    ledger.credit_pending(service, draft.id, staff_id=1)
+
+    ledger.receive(service, staff_id=1, payload={"beats": [
+        _beat(1, "", form_opened, datetime.now(UTC)),
+    ]})
+
+    assert ledger.pending == []
+    service.select_scenario(draft.id, draft.candidates[0].id)
+    assert _human_minutes(service, draft.id) >= 2.9

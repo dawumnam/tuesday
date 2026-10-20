@@ -50,6 +50,9 @@ AI 활용 역량 평가용 과제(상황·지시문·첨부 자료·채점 기�
 | `TD_SEED_ON_START` | `false` | app 컨테이너 시작 시 시드 적재 여부 (compose 전용) |
 | `TD_LANGFUSE_HOST` / `TD_LANGFUSE_PUBLIC_KEY` / `TD_LANGFUSE_SECRET_KEY` | `http://localhost:3300` / 없음 / 없음 | 두 키가 모두 있어야 추적합니다. 로컬 Langfuse의 키는 `pk-lf-local` / `sk-lf-local`입니다. |
 | `TD_LANGFUSE_PROJECT_ID` | 없음 | 지표 화면의 초안별 trace 링크용. 로컬 Langfuse 프로젝트 id는 `task-design`입니다. |
+| `TD_LANGFUSE_PUBLIC_HOST` | `TD_LANGFUSE_HOST` | 브라우저에서 여는 trace 링크의 Langfuse 주소. compose에서는 앱이 내부 주소(`http://langfuse:3000`)로 접속하므로 `http://localhost:3300`으로 설정되어 있습니다. |
+| `TD_FAKE_GATEWAY` | 없음 | `1`이면 데모 모드: 모델 호출 없이 한국어 예시 응답으로 화면 전체를 눌러 볼 수 있습니다. 역량 체계가 비어 있으면 시드를 자동으로 적재합니다. |
+| `TD_FAKE_DELAY` | `0.6` | 데모 모드에서 모델 호출 1회당 지연(초). 진행 화면을 보기 좋게 합니다. |
 | `TD_PASS_RATIO_TARGET` / `TD_WORK_MINUTES_TARGET` | `0.70` / `42` | 대시보드 성공 기준 (전면 재작성 없이 통과한 비율, 과제당 작업 시간 분) |
 | `TD_SOLVABLE_MIN_SCORE` | `70` | 풀이 가능성: 상 페르소나 평균 점수 하한 |
 | `TD_DISCRIMINATION_MIN_GAP` | `30` | 변별력: 상 − 하 점수 차 하한 |
@@ -69,6 +72,10 @@ make migrate            # 마이그레이션
 make seed               # 시드 적재 (실제 임베딩, API 키 필요)
 uv run streamlit run src/task_design/ui/app.py
 ```
+
+API 키 없이 둘러보기(데모 모드): `make db && TD_FAKE_GATEWAY=1 uv run streamlit run src/task_design/ui/app.py`.
+데모 모드에서는 난이도 '상'을 고르면 자기 수정 루프 1회가, 메모에 '실패 시연'이라고 적으면 실패 리포트가 나옵니다.
+진행 중인 실행은 서버 프로세스에서 돌기 때문에 브라우저를 닫아도 계속되며, '초안 목록'이나 `?draft=<id>` 주소로 다시 열 수 있습니다. 서버를 다시 시작하면 중단된 실행에 오류가 표시되고 '재시도'로 이어서 진행합니다.
 
 추적을 보려면 호스트 `.env`에 `TD_LANGFUSE_PUBLIC_KEY=pk-lf-local`, `TD_LANGFUSE_SECRET_KEY=sk-lf-local`, `TD_LANGFUSE_PROJECT_ID=task-design`도 넣습니다.
 

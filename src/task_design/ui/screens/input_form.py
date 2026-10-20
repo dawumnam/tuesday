@@ -17,7 +17,7 @@ def render(service, *, staff_id: int, demo: bool, on_started) -> None:
     if demo:
         st.info(
             f"데모 모드입니다. 실제 모델 대신 미리 준비한 한국어 예시로 응답합니다. "
-            f"난이도 '상'을 고르면 자기 수정 루프 1회를, 메모에 '{_fail_marker()}'를 넣으면 "
+            f"난이도 '상'을 고르면 자기 수정 루프 1회를, 메모에 '{_fail_marker()}'라고 적으면 "
             "실패 리포트를 볼 수 있습니다.",
             icon="🧪",
         )

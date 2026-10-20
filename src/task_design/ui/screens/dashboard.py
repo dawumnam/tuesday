@@ -86,7 +86,7 @@ def _labels(m: Metrics) -> None:
                         scale=alt.Scale(domain=labels, range=LABEL_COLORS)),
         tooltip=[alt.Tooltip("구성요소:N"), alt.Tooltip("검토 라벨:N"), alt.Tooltip("건수:Q")],
     )
-    st.altair_chart(chart, width="stretch")
+    st.altair_chart(chart.properties(height=280), width="stretch")
     table = df.pivot(index="구성요소", columns="검토 라벨", values="건수")
     table = table.reindex(index=[c.ko for c in LABELED_COMPONENTS],
                           columns=[lb.ko for lb in ReviewLabel])
