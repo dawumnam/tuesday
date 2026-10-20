@@ -49,6 +49,8 @@ AI 활용 역량 평가용 과제(상황·지시문·첨부 자료·채점 기�
 | `TD_DATABASE_URL` | `postgresql://task_design:task_design@localhost:54329/task_design` | 앱 DB |
 | `TD_SEED_ON_START` | `false` | app 컨테이너 시작 시 시드 적재 여부 (compose 전용) |
 | `TD_LANGFUSE_HOST` / `TD_LANGFUSE_PUBLIC_KEY` / `TD_LANGFUSE_SECRET_KEY` | `http://localhost:3300` / 없음 / 없음 | 두 키가 모두 있어야 추적합니다. 로컬 Langfuse의 키는 `pk-lf-local` / `sk-lf-local`입니다. |
+| `TD_LANGFUSE_PROJECT_ID` | 없음 | 지표 화면의 초안별 trace 링크용. 로컬 Langfuse 프로젝트 id는 `task-design`입니다. |
+| `TD_PASS_RATIO_TARGET` / `TD_WORK_MINUTES_TARGET` | `0.70` / `42` | 대시보드 성공 기준 (전면 재작성 없이 통과한 비율, 과제당 작업 시간 분) |
 | `TD_SOLVABLE_MIN_SCORE` | `70` | 풀이 가능성: 상 페르소나 평균 점수 하한 |
 | `TD_DISCRIMINATION_MIN_GAP` | `30` | 변별력: 상 − 하 점수 차 하한 |
 | `TD_GRADING_MAX_STDEV` | `5` | 채점 일관성: 3회 채점 표준편차 상한 |
@@ -68,7 +70,7 @@ make seed               # 시드 적재 (실제 임베딩, API 키 필요)
 uv run streamlit run src/task_design/ui/app.py
 ```
 
-추적을 보려면 호스트 `.env`에 `TD_LANGFUSE_PUBLIC_KEY=pk-lf-local`, `TD_LANGFUSE_SECRET_KEY=sk-lf-local`도 넣습니다.
+추적을 보려면 호스트 `.env`에 `TD_LANGFUSE_PUBLIC_KEY=pk-lf-local`, `TD_LANGFUSE_SECRET_KEY=sk-lf-local`, `TD_LANGFUSE_PROJECT_ID=task-design`도 넣습니다.
 
 ## 일괄 생성
 

@@ -74,6 +74,7 @@ services:
       TD_LANGFUSE_HOST: http://langfuse:3000
       TD_LANGFUSE_PUBLIC_KEY: pk-lf-local
       TD_LANGFUSE_SECRET_KEY: sk-lf-local
+      TD_LANGFUSE_PROJECT_ID: task-design
       TD_SEED_ON_START: ${TD_SEED_ON_START:-false}
     ports:
       - "8501:8501"
