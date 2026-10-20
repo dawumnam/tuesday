@@ -9,7 +9,15 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, TypeAdapter
 
 from task_design.db import Database
-from task_design.domain import Attachment, Audience, Level, Rubric, Task
+from task_design.domain import (
+    Attachment,
+    Audience,
+    Competency,
+    Level,
+    LevelIndicator,
+    Rubric,
+    Task,
+)
 from task_design.gateway import ModelGateway
 from task_design.settings import Settings
 
@@ -190,3 +198,64 @@ class TaskRepository:
                 f"SELECT {_TASK_COLUMNS} FROM tasks WHERE id = %s", (task_id,)
             ).fetchone()
         return _row_to_task(row) if row else None
+
+
+class CompetencyRepository:
+    """역량 체계 저장소: read-only lookups. Data arrives via ``task_design.loader``."""
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def get(self, competency_id: str) -> Competency | None:
+        found = self._load("WHERE c.id = %s", (competency_id,))
+        return found[0] if found else None
+
+    def list(self) -> list[Competency]:
+        return self._load("", ())
+
+    def level_indicators(self, competency_id: str, level: Level) -> list[LevelIndicator]:
+        """One 수준 지표 per sub-element of the competency at ``level``, in sub-element order."""
+        with self._db.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT s.competency_id, s.id, s.name, i.level, i.description
+                FROM competency_sub_elements s
+                JOIN level_indicators i ON i.sub_element_id = s.id
+                WHERE s.competency_id = %s AND i.level = %s
+                ORDER BY s.position, s.id
+                """,
+                (competency_id, Level(level).value),
+            ).fetchall()
+        return [
+            LevelIndicator(
+                competency_id=c, sub_element_id=sid, sub_element_name=n, level=Level(lv), description=d
+            )
+            for c, sid, n, lv, d in rows
+        ]
+
+    def _load(self, where: str, params: tuple) -> list[Competency]:
+        with self._db.connection() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT c.id, c.name, c.description, s.id, s.name, s.description, i.level, i.description
+                FROM competencies c
+                LEFT JOIN competency_sub_elements s ON s.competency_id = c.id
+                LEFT JOIN level_indicators i ON i.sub_element_id = s.id
+                {where}
+                ORDER BY c.id, s.position, s.id
+                """,
+                params,
+            ).fetchall()
+        competencies: dict[str, dict] = {}
+        subs: dict[str, dict] = {}
+        for cid, cname, cdesc, sid, sname, sdesc, level, idesc in rows:
+            comp = competencies.setdefault(
+                cid, {"id": cid, "name": cname, "description": cdesc, "sub_elements": []}
+            )
+            if sid is None:
+                continue
+            if sid not in subs:
+                subs[sid] = {"id": sid, "name": sname, "description": sdesc, "indicators": {}}
+                comp["sub_elements"].append(subs[sid])
+            subs[sid]["indicators"][level] = idesc
+        return [Competency.model_validate(c) for c in competencies.values()]

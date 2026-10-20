@@ -128,6 +128,45 @@ class Staff(BaseModel):
     name: str
 
 
+# --- 역량 체계 -----------------------------------------------------------------
+
+
+class SubElement(BaseModel):
+    """하위 요소 of a competency, with its 상·중·하 수준 지표."""
+
+    id: str = Field(min_length=1)
+    name: str
+    description: str = ""
+    indicators: dict[Level, str]
+
+    @field_validator("indicators")
+    @classmethod
+    def _all_levels(cls, v: dict[Level, str]) -> dict[Level, str]:
+        missing = [lv.value for lv in Level if lv not in v]
+        if missing:
+            raise ValueError(f"missing level indicators: {', '.join(missing)}")
+        return v
+
+
+class Competency(BaseModel):
+    """역량 in the 역량 체계."""
+
+    id: str = Field(min_length=1)
+    name: str
+    description: str = ""
+    sub_elements: list[SubElement] = Field(default_factory=list)
+
+
+class LevelIndicator(BaseModel):
+    """수준 지표: one sub-element's behaviour at one level."""
+
+    competency_id: str
+    sub_element_id: str
+    sub_element_name: str
+    level: Level
+    description: str
+
+
 class Audience(BaseModel):
     """대상자: job and career level."""
 
