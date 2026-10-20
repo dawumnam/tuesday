@@ -80,6 +80,16 @@ class FailureType(_KoEnum):
     INCONSISTENT_GRADING = "inconsistent_grading"
 
 
+class Stage(_KoEnum):
+    """Workflow step currently running, for progress display (``Draft.stage``).
+
+    Later tickets append their steps here (with a ``_KO`` label).
+    """
+
+    SEARCHING_SIMILAR_TASKS = "searching_similar_tasks"
+    GENERATING_CANDIDATES = "generating_candidates"
+
+
 class IntervalKind(_KoEnum):
     HUMAN_ACTIVE = "human_active"
     AGENT_RUN = "agent_run"
@@ -113,6 +123,8 @@ _KO: dict[StrEnum, str] = {
     FailureType.UNSOLVABLE: "풀이 불가",
     FailureType.LOW_DISCRIMINATION: "변별력 부족",
     FailureType.INCONSISTENT_GRADING: "채점 불일치",
+    Stage.SEARCHING_SIMILAR_TASKS: "유사 과제 검색",
+    Stage.GENERATING_CANDIDATES: "상황 후보 생성",
     IntervalKind.HUMAN_ACTIVE: "사람 활성",
     IntervalKind.AGENT_RUN: "에이전트 실행",
 }
@@ -367,14 +379,17 @@ class Draft(BaseModel):
     author_id: int
     input: DraftInput
     state: DraftState
-    stage: str | None = None  # current workflow step, for progress display
+    stage: Stage | None = None  # step running now (None while waiting on a human / done)
+    similar_tasks: list[Task] = Field(default_factory=list)  # 유사 과제 the candidates drew on
     candidates: list[ScenarioCandidate] = Field(default_factory=list)
     selected_candidate_id: UUID | None = None
     task: Task | None = None
     rounds: list[DraftRound] = Field(default_factory=list)
     failure_report: FailureReport | None = None
     review: Review | None = None
+    error: str | None = None  # last workflow failure, if the run crashed
     created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 # --- 측정 / 비용 ---------------------------------------------------------------

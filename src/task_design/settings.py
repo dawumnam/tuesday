@@ -99,6 +99,8 @@ class Settings(BaseSettings):
     gradings_per_submission: int = 3
 
     duplicate_threshold: float = 0.85  # embedding cosine ≥ this ⇒ 중복
+    similar_tasks_k: int = 5  # 유사 과제 shown to the 상황 후보 generator
+    candidate_generation_attempts: int = 3  # generation calls per batch of 3 상황 후보
     max_rounds: int = 3  # 자기 수정 루프 upper bound
     draft_token_budget: int = 2_000_000  # total tokens per draft before the loop stops
     max_examinee_turns: int = 6

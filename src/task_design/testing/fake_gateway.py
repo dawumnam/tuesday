@@ -98,6 +98,10 @@ class FakeGateway:
         self._embeddings[text] = list(vector)
         return self
 
+    def has_fallback(self, role: Role) -> bool:
+        """Whether ``respond_with`` has installed a fallback for ``role``."""
+        return role in self._defaults
+
     def pending(self, role: Role) -> int:
         """Scripted responses not yet consumed for ``role``."""
         return len(self._queues[role])
