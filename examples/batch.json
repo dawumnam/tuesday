@@ -1,0 +1,14 @@
+[
+  {"competency_ids": ["C1"], "audience": {"job": "인사", "career_level": "3년차"}, "difficulty": "medium", "memo": "채용 공고 개편 업무"},
+  {"competency_ids": ["C2"], "audience": {"job": "마케팅", "career_level": "신입"}, "difficulty": "low", "memo": null},
+  {"competency_ids": ["C3"], "audience": {"job": "고객 지원", "career_level": "5년차"}, "difficulty": "medium", "memo": "고객 응대 매뉴얼 개선"},
+  {"competency_ids": ["C4"], "audience": {"job": "재무·회계", "career_level": "3년차"}, "difficulty": "high", "memo": "CSV 첨부 포함"},
+  {"competency_ids": ["C5"], "audience": {"job": "영업 관리", "career_level": "5년차"}, "difficulty": "high", "memo": null},
+  {"competency_ids": ["C6"], "audience": {"job": "법무", "career_level": "10년차 팀장"}, "difficulty": "medium", "memo": "개인정보가 섞인 자료"},
+  {"competency_ids": ["C7"], "audience": {"job": "홍보", "career_level": "신입"}, "difficulty": "low", "memo": null},
+  {"competency_ids": ["C8"], "audience": {"job": "구매", "career_level": "5년차"}, "difficulty": "medium", "memo": "반복 보고서 자동화"},
+  {"competency_ids": ["C4", "C5"], "audience": {"job": "데이터 분석", "career_level": "3년차"}, "difficulty": "high", "memo": null},
+  {"competency_ids": ["C1", "C2"], "audience": {"job": "신사업 기획", "career_level": "10년차 팀장"}, "difficulty": "high", "memo": "요구 사항이 서로 충돌하는 메모"},
+  {"competency_ids": ["C3", "C7"], "audience": {"job": "교육 운영", "career_level": "3년차"}, "difficulty": "low", "memo": null},
+  {"competency_ids": ["C6", "C8"], "audience": {"job": "IT 지원", "career_level": "5년차"}, "difficulty": "medium", "memo": null}
+]
