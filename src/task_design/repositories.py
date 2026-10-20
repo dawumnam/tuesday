@@ -18,7 +18,7 @@ from task_design.domain import (
     Rubric,
     Task,
 )
-from task_design.gateway import ModelGateway
+from task_design.gateway import ModelGateway, Vector
 from task_design.settings import Settings
 
 TaskSource = Literal["seed", "agent"]
@@ -178,8 +178,15 @@ class TaskRepository:
         ``text`` is normally a 상황 후보's scenario. ``threshold`` defaults to
         ``settings.duplicate_threshold``. Most similar first. Exact scan (no ANN).
         """
-        threshold = self._settings.duplicate_threshold if threshold is None else threshold
         [v] = self._gateway.embed([text], draft_id=draft_id)
+        return self.find_duplicates_of_vector(v, threshold)
+
+    def find_duplicates_of_vector(
+        self, vector: Vector, threshold: float | None = None
+    ) -> list[SimilarTask]:
+        """``find_duplicates`` for an already-embedded text (no gateway call)."""
+        threshold = self._settings.duplicate_threshold if threshold is None else threshold
+        v = vector
         with self._db.connection() as conn:
             rows = conn.execute(
                 f"""

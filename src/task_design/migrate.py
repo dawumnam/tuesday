@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 
 import psycopg
+from psycopg.rows import dict_row, tuple_row
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "migrations"
 _FILENAME = re.compile(r"^(\d{4})_[a-z0-9_]+\.sql$")
@@ -30,8 +31,14 @@ def discover(directory: Path = MIGRATIONS_DIR) -> list[tuple[int, Path]]:
     return found
 
 
-def apply_migrations(url: str, directory: Path = MIGRATIONS_DIR) -> list[str]:
-    """Apply pending migrations; return the file names applied."""
+def apply_migrations(
+    url: str, directory: Path = MIGRATIONS_DIR, *, checkpointer: bool = True
+) -> list[str]:
+    """Apply pending migrations; return the file names applied.
+
+    With ``checkpointer`` (default), also creates/upgrades the LangGraph
+    Postgres checkpoint tables (``PostgresSaver.setup``) under the same lock.
+    """
     applied: list[str] = []
     with psycopg.connect(url, autocommit=True) as conn:
         conn.execute(
@@ -57,9 +64,21 @@ def apply_migrations(url: str, directory: Path = MIGRATIONS_DIR) -> list[str]:
                         (version, path.name),
                     )
                 applied.append(path.name)
+            if checkpointer:
+                _setup_checkpointer(conn)
         finally:
             conn.execute("SELECT pg_advisory_unlock(hashtext('task_design.schema_migrations'))")
     return applied
+
+
+def _setup_checkpointer(conn: psycopg.Connection) -> None:
+    from langgraph.checkpoint.postgres import PostgresSaver
+
+    conn.row_factory = dict_row  # PostgresSaver reads rows by column name
+    try:
+        PostgresSaver(conn).setup()  # type: ignore[arg-type]
+    finally:
+        conn.row_factory = tuple_row
 
 
 def main() -> None:
