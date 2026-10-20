@@ -26,6 +26,11 @@ TaskSource = Literal["seed", "agent"]
 # Reciprocal rank fusion constant (Cormack et al. 2009).
 RRF_K = 60
 
+# Minimum pg_trgm word_similarity(query, search_text) for the keyword arm
+# (pg_trgm's own default similarity threshold). Below it the "match" is one or
+# two incidental trigrams, e.g. a shared leading syllable.
+KEYWORD_MIN_WORD_SIMILARITY = 0.3
+
 _TASK_COLUMNS = (
     "id, scenario, instruction, attachments, rubric, competency_ids, audience, difficulty"
 )
@@ -120,7 +125,11 @@ class TaskRepository:
     ) -> list[Task]:
         """유사 과제 검색: trigram + vector rankings fused by RRF.
 
-        Each arm contributes its top ``max(pool, k)`` tasks; the top ``pool``
+        Each arm contributes its top ``max(pool, k)`` tasks. The keyword arm
+        only ranks real keyword matches (word similarity >=
+        ``KEYWORD_MIN_WORD_SIMILARITY``): otherwise non-matching tasks would be
+        ranked there by an arbitrary tie-break and their RRF score could push a
+        strong semantic-only match out of the results. The top ``pool``
         fused tasks go to ``gateway.rerank`` and the first ``k`` of its order
         are returned.
         """
@@ -132,7 +141,8 @@ class TaskRepository:
                 WITH keyword AS (
                     SELECT id, row_number() OVER (ORDER BY %(q)s <<-> search_text, id) AS r
                     FROM (
-                        SELECT id, search_text FROM tasks WHERE status = 'active'
+                        SELECT id, search_text FROM tasks
+                        WHERE status = 'active' AND %(q)s <<-> search_text <= %(max_kw_dist)s
                         ORDER BY %(q)s <<-> search_text LIMIT %(arm)s
                     ) s
                 ),
@@ -154,7 +164,14 @@ class TaskRepository:
                 ORDER BY f.score DESC, t.id
                 LIMIT %(pool)s
                 """,
-                {"q": query, "v": _vector_literal(q), "arm": arm, "rrf": RRF_K, "pool": pool},
+                {
+                    "q": query,
+                    "v": _vector_literal(q),
+                    "arm": arm,
+                    "max_kw_dist": 1 - KEYWORD_MIN_WORD_SIMILARITY,
+                    "rrf": RRF_K,
+                    "pool": pool,
+                },
             ).fetchall()
         fused = [_row_to_task(r) for r in rows]
         if not fused:

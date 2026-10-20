@@ -61,6 +61,18 @@ def db(settings: Settings) -> Iterator[Database]:
 
 
 @pytest.fixture
+def empty_repositories(db: Database) -> Database:
+    """``db`` with the 과제 DB and 역량 체계 tables emptied before the test.
+
+    Use it when a test's results depend on everything stored (search rankings,
+    listings), so rows written by earlier tests in the session can't interfere.
+    """
+    with db.connection() as conn:
+        conn.execute("TRUNCATE tasks, competencies CASCADE")
+    return db
+
+
+@pytest.fixture
 def fake_gateway(settings: Settings) -> FakeGateway:
     return FakeGateway(embedding_dim=settings.embedding_dim)
 
