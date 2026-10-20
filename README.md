@@ -59,7 +59,7 @@ AI 활용 역량 평가용 과제(상황·지시문·첨부 자료·채점 기�
 | `TD_GRADING_MAX_STDEV` | `5` | 채점 일관성: 3회 채점 표준편차 상한 |
 | `TD_DUPLICATE_THRESHOLD` | `0.85` | 상황 후보 중복 판정 코사인 유사도 |
 | `TD_MAX_FIX_ROUNDS` | `3` | 자기 수정 루프의 최대 수정 횟수. 1회차 검증 뒤 최대 3번 고치므로 회차는 최대 4회 |
-| `TD_DRAFT_TOKEN_BUDGET` | `2000000` | 초안당 토큰 예산. 넘으면 자기 수정을 멈추고 실패 리포트와 함께 검토 대기로 보냅니다. |
+| `TD_DRAFT_TOKEN_BUDGET` | `2000000` | 초안당 토큰 예산. 매 회차 모의 응시 전과 수정 전에 확인하고, 넘으면 실패 리포트와 함께 검토 대기로 보냅니다. |
 | `TD_ROUTING__<역할>__MODEL` / `__THINKING` | `gemini-3.8-flash` / `high` | 역할별 모델과 사고 수준. 역할: `GENERATION`, `REVIEW`, `EXAMINEE`, `AI_TOOL`, `GRADING`, `RERANK`, `EMBEDDING` |
 | `TD_PRICES` | 코드의 단가표 | 비용 추정 단가(JSON, 통째로 교체). `gemini-3.8-flash` 단가는 2027-01-01에 두 배가 됩니다. |
 

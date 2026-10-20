@@ -158,6 +158,7 @@ _Avoid_: 소요 시간, 리드타임
 | 풀이 불가 / 변별력 부족 / 채점 불일치 | `FailureType.UNSOLVABLE` / `LOW_DISCRIMINATION` / `INCONSISTENT_GRADING` |
 | 자기 수정 루프 | self-correction loop |
 | 실패 리포트 | `FailureReport` |
+| 다시 실행 (실패한 실행 이어 하기, 자기 수정 루프와 무관) | `TaskDesignService.retry`, 오류 종류 `DraftErrorKind` |
 | 최종 검토 | `TaskDesignService.review` / `Review` |
 | 검토 라벨 | `ReviewLabel` (유지 `KEEP`, 부분 수정 `PARTIAL_EDIT`, 전면 재작성 `FULL_REWRITE`) |
 | 확정 / 반려 (결정) | `ReviewDecision.CONFIRM` / `ReviewDecision.REJECT` |
