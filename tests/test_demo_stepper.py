@@ -249,6 +249,7 @@ def test_duplicate_check_trace_shows_rejected_and_accepted_candidates(
     [rejected] = [p for p in trace.proposals if p.outcome != "accepted"]
     assert rejected.scenario == near_copy and rejected.outcome == "db_duplicate"
     assert rejected.attempt == 1
+    assert rejected.max_peer_similarity is None  # no candidate accepted before it
     assert rejected.max_db_similarity == pytest.approx(0.95, abs=1e-3)
     assert rejected.nearest_task_scenario == existing
     assert [p.scenario for p in trace.accepted()] == [c.scenario for c in draft.candidates]

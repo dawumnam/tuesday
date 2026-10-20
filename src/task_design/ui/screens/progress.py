@@ -12,6 +12,7 @@ from task_design.domain import Draft, DraftState, PersonaStatus, Stage
 from task_design.stepper import Stepper
 from task_design.ui.screens import stepping
 from task_design.ui.screens.common import LEVELS, show_task, verdict_line
+from task_design.workflow.observer import StepPoint
 
 POLL_SECONDS = 2.0
 
@@ -33,24 +34,31 @@ def _live(service, draft_id, shown_state: DraftState, shown_error: str | None,
     draft = service.get_draft(draft_id)
     if draft.state is not shown_state or draft.error != shown_error:
         st.rerun(scope="app")  # another screen takes over (후보 선택, 검토, 오류)
+    held = None
     if stepper is not None:  # 데모 모드: 단계별 진행 / 자동 진행
+        held = stepper.status(draft.id).waiting
         stepping.controls(stepper, draft)
-    show_progress(draft)
+    show_progress(draft, held=held)
 
 
-def show_progress(draft: Draft) -> None:
+def show_progress(draft: Draft, *, held: StepPoint | None = None) -> None:
+    """``held``: the stage boundary a 데모 모드 단계별 진행 run waits at (marked ⏸️)."""
     if draft.state is DraftState.GENERATING:
         st.subheader("상황 후보를 만드는 중입니다")
-        _steps(_SCENARIO_STAGES, draft.stage)
+        _steps(_SCENARIO_STAGES, draft.stage, held)
         return
-    number = len(draft.rounds) + 1
-    st.subheader(f"{number}회차 검증 중")
-    stage_text = draft.stage.ko if draft.stage else "다음 단계 준비 중"
+    finishing = held is not None and held.stage is None  # 판정 done, before 검토 대기
+    number = len(draft.rounds) + (0 if finishing and draft.rounds else 1)
+    st.subheader(f"{number}회차 검증 완료" if finishing else f"{number}회차 검증 중")
+    if held is not None:
+        stage_text = f"{held.stage.ko if held.stage else '검토 대기로 넘기기'} 앞에서 멈춤"
+    else:
+        stage_text = draft.stage.ko if draft.stage else "다음 단계 준비 중"
     st.markdown(f"현재 단계: **{stage_text}**")
     stages = _VERIFY_STAGES if number == 1 else [Stage.FIXING, *_VERIFY_STAGES[4:]]
     if number > 1 and draft.stage not in stages and draft.stage is not None:
         stages = [draft.stage, *stages]
-    _steps(stages, draft.stage)
+    _steps(stages, draft.stage, held)
 
     st.markdown("#### 응시자 페르소나")
     cols = st.columns(3)
@@ -71,14 +79,18 @@ def show_progress(draft: Draft) -> None:
             show_task(draft.task, key=f"pv-{draft.id}")
 
 
-def _steps(stages: list[Stage], current: Stage | None) -> None:
+def _steps(stages: list[Stage], current: Stage | None, held: StepPoint | None = None) -> None:
     idx = stages.index(current) if current in stages else -1
+    marker = "▶"
+    if held is not None:  # the stage it waits before has not started yet
+        marker = "⏸️"
+        idx = stages.index(held.stage) if held.stage in stages else len(stages)
     lines = []
     for i, stage in enumerate(stages):
         if i < idx:
             lines.append(f"✓ {stage.ko}")
         elif i == idx:
-            lines.append(f"**▶ {stage.ko}**")
+            lines.append(f"**{marker} {stage.ko}**")
         else:
             lines.append(f"○ {stage.ko}")
     st.markdown("  \n".join(lines))

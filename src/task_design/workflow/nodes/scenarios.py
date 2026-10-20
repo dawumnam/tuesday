@@ -86,15 +86,16 @@ def generate_candidates(deps: Deps, state: WorkflowState) -> dict[str, Any]:
         vectors = deps.gateway.embed([p.scenario for p in proposals], draft_id=did)
         for proposal, vector in zip(proposals, vectors, strict=True):
             db_dups = deps.tasks.find_duplicates_of_vector(vector, threshold)
-            peer = max((_cosine(vector, v) for _, v in accepted), default=0.0)
+            peers = [_cosine(vector, v) for _, v in accepted]
+            peer = max(peers, default=0.0)
+            if checks is not None:
+                checks.append(_check(deps, attempt, proposal, vector, max(peers, default=None),
+                                     "db_duplicate" if db_dups else
+                                     "peer_duplicate" if peer >= threshold else "accepted"))
             if db_dups or peer >= threshold:
                 rejected.append(proposal.scenario)
             else:
                 accepted.append((proposal, vector))
-            if checks is not None:
-                checks.append(_check(deps, attempt, proposal, vector, peer,
-                                     "db_duplicate" if db_dups else
-                                     "peer_duplicate" if peer >= threshold else "accepted"))
         if len(accepted) == CANDIDATE_COUNT:
             break
     else:
@@ -119,7 +120,7 @@ def generate_candidates(deps: Deps, state: WorkflowState) -> dict[str, Any]:
 
 
 def _check(deps: Deps, attempt: int, proposal: CandidateProposal, vector: Vector,
-           peer: float, outcome: ProposalOutcome) -> ProposalCheck:
+           peer: float | None, outcome: ProposalOutcome) -> ProposalCheck:
     nearest = deps.tasks.nearest_to_vector(vector)
     return ProposalCheck(
         attempt=attempt, title=proposal.title, scenario=proposal.scenario, outcome=outcome,
