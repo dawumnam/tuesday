@@ -154,6 +154,21 @@ def test_an_edited_version_that_breaks_a_domain_rule_is_rejected(
     assert after.review is None
 
 
+@pytest.mark.parametrize(
+    "breakage", ["points_not_100", "foreign_competency", "no_process_item", "empty_instruction"]
+)
+def test_rejecting_stores_the_edited_version_as_given_without_validating_it(
+    service, awaiting_review, breakage
+):
+    edited = _broken(awaiting_review.task, breakage)
+
+    service.review(awaiting_review.id, REVIEWER, ALL_KEEP, ReviewDecision.REJECT, edited)
+
+    after = service.get_draft(awaiting_review.id)
+    assert after.state is DraftState.REJECTED
+    assert after.review.edited_task == edited
+
+
 def test_a_confirmation_that_fails_midway_leaves_the_draft_awaiting_review(
     service, awaiting_review, fake_gateway, monkeypatch
 ):

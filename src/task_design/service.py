@@ -254,29 +254,37 @@ class TaskDesignService:
         reviewer_id: int,
         labels: dict[Component, ReviewLabel],
         decision: ReviewDecision,
-        edited_task: Task | None = None,
+        edited_task: Task | dict[str, Any] | None = None,
     ) -> Draft:
         """최종 검토: state 검토 대기 → 확정 | 반려, storing the review and its 검토 라벨.
 
         ``labels`` must hold exactly 상황·지시문·채점 기준. ``edited_task`` is the
         reviewer's 수정본 (default: the draft's task as the agent left it). On 확정 the
-        task (with edits) goes into the 과제 DB under the draft's id, so it is found by
-        유사 과제 검색. On 반려 the draft is kept with its labels.
+        수정본 is validated and the task (with edits) goes into the 과제 DB under the
+        draft's id, so it is found by 유사 과제 검색. On 반려 the draft is kept with its
+        labels, and the 수정본 (if any) is stored as given, without validation.
 
         Raises ``DraftNotFound``; ``SelfReview`` if the reviewer wrote the draft;
-        ``InvalidReviewLabels``; ``InvalidEditedTask`` if the 수정본 breaks a domain
-        rule; ``InvalidDraftState`` unless the draft is in 검토 대기.
+        ``InvalidReviewLabels``; ``InvalidEditedTask`` if a 확정 수정본 breaks a domain
+        rule (100점 배점 etc.); ``InvalidDraftState`` unless the draft is in 검토 대기.
         """
         draft = self.get_draft(draft_id)
         if reviewer_id == draft.author_id:
             raise SelfReview("자신이 작성한 초안은 최종 검토할 수 없습니다. 다른 담당자가 검토해야 합니다.")
         labels = self._check_labels(labels)
         decision = ReviewDecision(decision)
-        edited = self._check_edited_task(draft, edited_task) if edited_task is not None else None
+        edited: Task | dict[str, Any] | None
+        if edited_task is None:
+            edited = None
+        elif decision is ReviewDecision.CONFIRM:
+            edited = self._check_edited_task(draft, edited_task)
+        else:  # 반려: kept as given, for failure analysis
+            edited = edited_task if isinstance(edited_task, Task) else dict(edited_task)
         review = Review(reviewer_id=reviewer_id, labels=labels, decision=decision,
                         edited_task=edited)
 
         def confirm() -> UUID:
+            assert edited is None or isinstance(edited, Task)
             task = (edited or draft.task).model_copy(update={"id": draft_id})
             return self._tasks.add(task, draft_id=draft_id)
 

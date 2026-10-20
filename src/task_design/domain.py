@@ -9,7 +9,7 @@ from __future__ import annotations
 import statistics
 from datetime import datetime
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -402,7 +402,9 @@ class Review(BaseModel):
     reviewer_id: int
     labels: dict[Component, ReviewLabel]
     decision: ReviewDecision
-    edited_task: Task | None = None
+    # 수정본. On 확정 always a valid Task; on 반려 stored as the reviewer gave it, so it
+    # may break domain rules or not even parse as a Task (then it is the raw dict).
+    edited_task: Task | dict[str, Any] | None = Field(default=None, union_mode="left_to_right")
     reviewed_at: datetime | None = None
 
     @model_validator(mode="after")

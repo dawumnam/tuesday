@@ -63,7 +63,7 @@ def render(service, draft: Draft, *, staff_id: int, staff: dict[int, str]) -> No
                             width="stretch")
         reject = c2.button("반려", disabled=not ready, key=f"{k}-reject", width="stretch")
         if confirm or reject:
-            if problem:
+            if confirm and problem:  # 반려 stores the 수정본 as it is
                 st.error(problem)
                 return
             decision = ReviewDecision.CONFIRM if confirm else ReviewDecision.REJECT

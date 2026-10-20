@@ -7,6 +7,7 @@ its own, so a ``get_draft`` from another thread sees progress live.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Sequence
 from uuid import UUID
 
@@ -72,7 +73,7 @@ def _load_review(conn, draft_id: UUID) -> Review | None:
         reviewer_id=reviewer_id,
         labels=dict(labels),
         decision=ReviewDecision(decision),
-        edited_task=Task.model_validate(edited_task) if edited_task is not None else None,
+        edited_task=edited_task,
         reviewed_at=reviewed_at,
     )
 
@@ -80,6 +81,12 @@ def _load_review(conn, draft_id: UUID) -> Review | None:
 def _input_title(input: DraftInput) -> str:
     return (f"{', '.join(input.competency_ids)} · {input.audience.job} "
             f"{input.audience.career_level} · 난이도 {input.difficulty.ko}")
+
+
+def _edited_json(edited: Task | dict | None) -> str | None:
+    if edited is None:
+        return None
+    return edited.model_dump_json() if isinstance(edited, Task) else json.dumps(edited)
 
 
 def _dump(adapter: TypeAdapter, value: object) -> str:
@@ -241,7 +248,7 @@ class DraftStore:
                 "INSERT INTO reviews (draft_id, reviewer_id, decision, edited_task, task_id) "
                 "VALUES (%s, %s, %s, %s, %s)",
                 (draft_id, review.reviewer_id, review.decision.value,
-                 review.edited_task.model_dump_json() if review.edited_task else None, task_id),
+                 _edited_json(review.edited_task), task_id),
             )
             with conn.cursor() as cur:
                 cur.executemany(
