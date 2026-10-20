@@ -13,10 +13,12 @@ from pydantic import ValidationError
 from task_design.db import Database
 from task_design.domain import (
     LABELED_COMPONENTS,
+    Competency,
     Component,
     Draft,
     DraftInput,
     DraftState,
+    DraftSummary,
     Interval,
     IntervalKind,
     Metrics,
@@ -43,6 +45,47 @@ log = logging.getLogger(__name__)
 
 def _run_inline(job: Callable[[], None]) -> None:
     job()
+
+
+class InvalidDraftInput(ValueError):
+    """The 초안 input breaks a rule (1–2 distinct 역량, 대상자 직무·경력 수준, 난이도).
+
+    The message is Korean and lists every problem, for the UI and the CLI.
+    """
+
+
+_INPUT_PROBLEMS = {
+    "competency_ids": "역량은 서로 다른 것으로 1~2개 골라야 합니다",
+    "job": "대상자 직무를 입력해야 합니다",
+    "career_level": "대상자 경력 수준을 입력해야 합니다",
+    "difficulty": "목표 난이도는 상·중·하 중 하나여야 합니다",
+    "memo": "메모는 글자여야 합니다",
+}
+
+
+def _check_input(input: DraftInput | dict[str, Any]) -> DraftInput:
+    raw = input.model_dump() if isinstance(input, DraftInput) else input
+    problems: list[str] = []
+    try:
+        parsed = DraftInput.model_validate(raw)
+    except ValidationError as e:
+        parsed = None
+        for err in e.errors():
+            field = next((str(p) for p in reversed(err["loc"]) if str(p) in _INPUT_PROBLEMS),
+                         None)
+            text = _INPUT_PROBLEMS.get(field or "", "입력 형식이 올바르지 않습니다")
+            if field is None and err["loc"] and err["loc"][0] == "audience":
+                text = "대상자 직무와 경력 수준을 입력해야 합니다"
+            problems.append(text)
+    if parsed is not None:
+        if not parsed.audience.job.strip():
+            problems.append(_INPUT_PROBLEMS["job"])
+        if not parsed.audience.career_level.strip():
+            problems.append(_INPUT_PROBLEMS["career_level"])
+    if problems:
+        raise InvalidDraftInput("입력을 확인하세요: " + "; ".join(dict.fromkeys(problems)) + ".")
+    assert parsed is not None
+    return parsed
 
 
 class UnknownCompetency(ValueError):
@@ -121,16 +164,24 @@ class TaskDesignService:
             rows = conn.execute("SELECT id, name FROM staff ORDER BY id").fetchall()
         return [Staff(id=r[0], name=r[1]) for r in rows]
 
+    def list_competencies(self) -> list[Competency]:
+        """The 역량 체계 (for the 입력 폼), ordered by id."""
+        return self._competencies.list()
+
+    def list_drafts(
+        self, *, author_id: int | None = None, states: list[DraftState] | None = None
+    ) -> list[DraftSummary]:
+        """초안 목록, newest first: e.g. one 담당자's drafts, or the 검토 대기 queue."""
+        return self._drafts.list(author_id=author_id, states=states)
+
     def start(self, input: DraftInput | dict[str, Any], author_id: int) -> Draft:
         """Create a draft and generate 3 상황 후보; state 생성 중 → 상황 선택 대기.
 
-        Raises ``pydantic.ValidationError`` for invalid input (e.g. not 1–2 역량) and
-        ``UnknownCompetency`` for a competency id not in the 역량 체계.
+        Raises ``InvalidDraftInput`` (Korean message) for invalid input (e.g. not 1–2
+        역량, blank 직무) and ``UnknownCompetency`` for a competency id not in the 역량 체계.
         A failing workflow step does not raise: the draft is returned with ``error`` set.
         """
-        input = DraftInput.model_validate(
-            input.model_dump() if isinstance(input, DraftInput) else input
-        )
+        input = _check_input(input)
         known = {c.id for c in self._competencies.list()}
         unknown = [cid for cid in input.competency_ids if cid not in known]
         if unknown:

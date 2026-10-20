@@ -7,7 +7,7 @@ its own, so a ``get_draft`` from another thread sees progress live.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from uuid import UUID
 
 from pydantic import TypeAdapter
@@ -18,6 +18,7 @@ from task_design.domain import (
     DraftInput,
     DraftRound,
     DraftState,
+    DraftSummary,
     FailureReport,
     Level,
     PersonaStatus,
@@ -75,6 +76,11 @@ def _load_review(conn, draft_id: UUID) -> Review | None:
     )
 
 
+def _input_title(input: DraftInput) -> str:
+    return (f"{', '.join(input.competency_ids)} · {input.audience.job} "
+            f"{input.audience.career_level} · 난이도 {input.difficulty.ko}")
+
+
 def _dump(adapter: TypeAdapter, value: object) -> str:
     return adapter.dump_json(value).decode()
 
@@ -120,6 +126,44 @@ class DraftStore:
             created_at=created,
             updated_at=updated,
         )
+
+    def list(
+        self,
+        *,
+        author_id: int | None = None,
+        states: Sequence[DraftState] | None = None,
+        limit: int = 200,
+    ) -> list[DraftSummary]:
+        """Drafts newest first, optionally only one author's and/or only some states."""
+        where, params = [], []
+        if author_id is not None:
+            where.append("author_id = %s")
+            params.append(author_id)
+        if states is not None:
+            where.append("state = ANY(%s)")
+            params.append([s.value for s in states])
+        clause = f"WHERE {' AND '.join(where)}" if where else ""
+        with self._db.connection() as conn:
+            rows = conn.execute(
+                "SELECT id, author_id, state, stage, input, candidates, selected_candidate_id, "
+                f"error IS NOT NULL, created_at, updated_at FROM drafts {clause} "
+                "ORDER BY created_at DESC, id LIMIT %s",
+                (*params, limit),
+            ).fetchall()
+        out = []
+        for (id_, author, state, stage, input_, candidates, selected, has_error, created,
+             updated) in rows:
+            input_model = DraftInput.model_validate(input_)
+            title = next(
+                (c["title"] for c in candidates if selected and c.get("id") == str(selected)),
+                None,
+            ) or _input_title(input_model)
+            out.append(DraftSummary(
+                id=id_, author_id=author, state=DraftState(state),
+                stage=Stage(stage) if stage else None, title=title, input=input_model,
+                has_error=has_error, created_at=created, updated_at=updated,
+            ))
+        return out
 
     def transition(self, draft_id: UUID, expected: DraftState, new: DraftState) -> None:
         """Atomically move ``expected`` → ``new``; raise if the draft is elsewhere."""

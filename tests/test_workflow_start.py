@@ -7,13 +7,12 @@ import random
 import uuid
 
 import pytest
-from pydantic import ValidationError
 
 from task_design.db import Database
 from task_design.domain import DraftState, Stage
 from task_design.gateway import Role
 from task_design.repositories import TaskRepository
-from task_design.service import TaskDesignService
+from task_design.service import InvalidDraftInput, TaskDesignService
 from task_design.testing.workflow import (
     ScenarioWriter,
     ensure_competencies,
@@ -141,7 +140,17 @@ def test_failed_generation_leaves_draft_generating_with_error_and_blocks_regener
 def test_start_requires_one_or_two_distinct_competencies(service, fake_gateway, competency_ids):
     raw = make_input().model_dump(mode="json") | {"competency_ids": competency_ids}
 
-    with pytest.raises(ValidationError):
+    with pytest.raises(InvalidDraftInput):
+        service.start(raw, author_id=1)
+    assert fake_gateway.calls == []
+
+
+@pytest.mark.parametrize("audience", [{"job": "", "career_level": "3년차"},
+                                      {"job": "마케팅", "career_level": "  "}])
+def test_start_requires_a_job_and_career_level(service, fake_gateway, audience):
+    raw = make_input().model_dump(mode="json") | {"audience": audience}
+
+    with pytest.raises(InvalidDraftInput):
         service.start(raw, author_id=1)
     assert fake_gateway.calls == []
 

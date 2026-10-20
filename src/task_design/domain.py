@@ -421,6 +421,20 @@ class Draft(BaseModel):
     updated_at: datetime | None = None
 
 
+class DraftSummary(BaseModel):
+    """One row of a 초안 목록 (``TaskDesignService.list_drafts``)."""
+
+    id: UUID
+    author_id: int
+    state: DraftState
+    stage: Stage | None = None
+    title: str  # the chosen 상황 후보's title, else a summary of the input
+    input: DraftInput
+    has_error: bool = False
+    created_at: datetime
+    updated_at: datetime
+
+
 # --- 측정 / 비용 ---------------------------------------------------------------
 
 

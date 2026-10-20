@@ -11,6 +11,7 @@ dependencies = [
     "langfuse>=2.60,<3",
     "langgraph>=1.2.16",
     "langgraph-checkpoint-postgres>=3.2.0",
+    "streamlit>=1.66.0",
 ]
 
 [project.scripts]
