@@ -199,8 +199,8 @@ class DraftStore:
         """
         with self._db.connection() as conn:
             cur = conn.execute(
-                "UPDATE drafts SET state = %s, selected_candidate_id = %s, error = NULL, error_kind = NULL, "
-                "updated_at = now() "
+                "UPDATE drafts SET state = %s, selected_candidate_id = %s, error = NULL, "
+                "error_kind = NULL, updated_at = now() "
                 "WHERE id = %s AND state = %s "
                 "AND candidates @> jsonb_build_array(jsonb_build_object('id', %s::text))",
                 (DraftState.VERIFYING.value, candidate_id, draft_id,

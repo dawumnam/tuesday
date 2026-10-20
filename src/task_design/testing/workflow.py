@@ -18,7 +18,6 @@ the prompt. Combine it with responders for other GENERATION schemas via
 from __future__ import annotations
 
 import itertools
-import re
 import threading
 import uuid
 from collections.abc import Callable, Mapping, Sequence
@@ -50,8 +49,6 @@ from task_design.workflow.schemas import (
     InstructionDraft,
     RubricDraft,
 )
-
-_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 
 def make_input(**overrides: Any) -> DraftInput:
@@ -130,7 +127,7 @@ def seed_similar_tasks(
 
 def referenced_ids(call: FakeCall) -> list[str]:
     """Task ids that appear in the call's prompt (the 유사 과제 shown to the model)."""
-    return list(dict.fromkeys(_UUID.findall(call.prompt)))
+    return list(dict.fromkeys(prompts.TASK_ID_PATTERN.findall(call.prompt)))
 
 
 def candidate(scenario: str, title: str | None = None, refs: list[str] | None = None) -> dict:

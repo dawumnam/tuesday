@@ -1,16 +1,21 @@
 """Korean prompts for the workflow's model calls.
 
-Tests never assert on these strings; change wording freely.
+Tests never assert on these strings; change wording freely. The offline fakes
+(데모 모드, test helpers) only read the markers below, so keep a prompt using its
+marker constant rather than spelling the marker out.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
+from uuid import UUID
 
 from task_design.domain import (
     Attachment,
     ChatTurn,
     Competency,
+    Component,
     DraftInput,
     Level,
     LevelIndicator,
@@ -18,6 +23,46 @@ from task_design.domain import (
     Task,
 )
 from task_design.gateway import Message
+
+
+# --- Markers: what offline fakes read to answer like a model ----------------------
+
+JOB_FIELD = "- 직무: "
+CAREER_FIELD = "- 경력 수준: "
+DIFFICULTY_FIELD = "- 목표 난이도: "
+AVOID_HEADING = "## 피해야 할 상황"  # 상황 후보: scenarios not to offer again
+INSTRUCTION_HEADING = "## 지시문"
+# Present only when that component is being rewritten (자기 수정 or 검토 에이전트).
+PREVIOUS_HEADING = {
+    Component.INSTRUCTION: "## 이전 지시문",
+    Component.ATTACHMENTS: "## 이전 첨부 자료",
+    Component.RUBRIC: "## 이전 채점 기준",
+}
+COMPETENCY_IDS_FIELD = "- 각 항목의 competency_id는 다음 중 하나입니다: "
+TRANSCRIPT_HEADING = "## 제출물: AI 도구 대화 기록"
+EXAMINEE_PREFIX = "[응시자]"  # starts each 응시자 line of a transcript being graded
+TASK_ID_PATTERN = re.compile(r"\[과제 ID: ([0-9a-f-]{36})\]")  # a 유사 과제 shown to the model
+RUBRIC_POINTS_PATTERN = re.compile(r"^\d+\. \[(?:과정|산출물)\] .*?\((\d+)점, 역량", re.MULTILINE)
+
+
+def task_id_marker(task_id: UUID | None) -> str:
+    return f"[과제 ID: {task_id}]"
+
+
+def field(prompt: str, label: str) -> str | None:
+    """Value of a ``- label: value`` line (``label`` is one of the ``*_FIELD`` markers)."""
+    m = re.search(rf"^{re.escape(label)}(.+)$", prompt, re.MULTILINE)
+    return m.group(1).strip() if m else None
+
+
+def section(prompt: str, heading: str) -> str:
+    """Body under a ``## heading`` (one of the ``*_HEADING`` markers), up to the next one."""
+    m = re.search(rf"^{re.escape(heading)}[^\n]*\n(.*?)(?=^## |\Z)", prompt, re.MULTILINE | re.S)
+    return m.group(1).strip() if m else ""
+
+
+def is_rewrite(prompt: str, component: Component) -> bool:
+    return PREVIOUS_HEADING[component] in prompt
 
 
 def _competency_lines(input: DraftInput, competencies: Sequence[Competency]) -> str:
@@ -60,10 +105,10 @@ def scenario_candidates(
 ) -> list[Message]:
     """상황 후보 생성 프롬프트. ``avoid``: scenarios that must not be repeated or imitated."""
     refs = "\n\n".join(
-        f"[과제 ID: {t.id}]\n상황: {t.scenario}\n지시문: {t.instruction}" for t in similar_tasks
+        f"{task_id_marker(t.id)}\n상황: {t.scenario}\n지시문: {t.instruction}" for t in similar_tasks
     ) or "(참고할 기존 과제 없음)"
     avoid_block = (
-        "\n\n## 피해야 할 상황 (이미 제시했거나 기존 과제와 너무 비슷함)\n"
+        f"\n\n{AVOID_HEADING} (이미 제시했거나 기존 과제와 너무 비슷함)\n"
         + "\n".join(f"- {a}" for a in avoid)
         if avoid
         else ""
@@ -74,9 +119,9 @@ def scenario_candidates(
 {_competency_lines(input, competencies)}
 
 ## 대상자와 난이도
-- 직무: {input.audience.job}
-- 경력 수준: {input.audience.career_level}
-- 목표 난이도: {input.difficulty.ko}{memo}
+{JOB_FIELD}{input.audience.job}
+{CAREER_FIELD}{input.audience.career_level}
+{DIFFICULTY_FIELD}{input.difficulty.ko}{memo}
 
 ## 참고할 기존 과제 (유사 과제)
 {refs}{avoid_block}
@@ -105,9 +150,9 @@ def _brief(input: DraftInput, competencies: Sequence[Competency], scenario: str)
 {_competency_lines(input, competencies)}
 
 ## 대상자와 난이도
-- 직무: {input.audience.job}
-- 경력 수준: {input.audience.career_level}
-- 목표 난이도: {input.difficulty.ko}{memo}
+{JOB_FIELD}{input.audience.job}
+{CAREER_FIELD}{input.audience.career_level}
+{DIFFICULTY_FIELD}{input.difficulty.ko}{memo}
 
 ## 상황 (담당자가 고른 것, 바꾸지 마세요)
 {scenario}"""
@@ -149,7 +194,7 @@ def instruction(
     issues: Sequence[str] = (),
 ) -> list[Message]:
     """지시문 prompt. ``previous`` + ``issues``: rewrite an existing one to fix these problems."""
-    prev = f"\n\n## 이전 지시문\n{previous}" if previous else ""
+    prev = f"\n\n{PREVIOUS_HEADING[Component.INSTRUCTION]}\n{previous}" if previous else ""
     user = f"""\
 {_brief(input, competencies, scenario)}{prev}{_issues_block("고쳐야 할 점", issues)}
 
@@ -171,12 +216,13 @@ def attachments(
     issues: Sequence[str] = (),
 ) -> list[Message]:
     """첨부 자료 prompt. ``previous`` + ``issues``: rewrite the existing ones (and their 함정)."""
-    prev = (f"\n\n## 이전 첨부 자료\n{_attachments_text(previous, with_traps=True)}"
+    prev = (f"\n\n{PREVIOUS_HEADING[Component.ATTACHMENTS]}\n"
+            f"{_attachments_text(previous, with_traps=True)}"
             if previous else "")
     user = f"""\
 {_brief(input, competencies, scenario)}
 
-## 지시문
+{INSTRUCTION_HEADING}
 {instruction}{prev}{_issues_block("고쳐야 할 점", issues)}
 
 ## 요청
@@ -198,12 +244,12 @@ def rubric(
     issues: Sequence[str] = (),
 ) -> list[Message]:
     """채점 기준 prompt. ``previous`` + ``issues``: rewrite an existing one to fix these problems."""
-    prev = f"\n\n## 이전 채점 기준\n{rubric_text(previous)}" if previous else ""
+    prev = f"\n\n{PREVIOUS_HEADING[Component.RUBRIC]}\n{rubric_text(previous)}" if previous else ""
     ids = ", ".join(input.competency_ids)
     user = f"""\
 {_brief(input, competencies, scenario)}
 
-## 지시문
+{INSTRUCTION_HEADING}
 {instruction}
 
 ## 첨부 자료
@@ -214,7 +260,7 @@ def rubric(
 - 항목은 3~5개, 배점(points) 합계는 100점입니다.
 - 과정 항목(type=process, AI 사용 과정인 대화 기록을 판정)을 1개 이상, 산출물 항목(type=output)을
   1개 이상 둡니다. 함정을 발견했는지가 점수에 드러나게 합니다.
-- 각 항목의 competency_id는 다음 중 하나입니다: {ids}
+{COMPETENCY_IDS_FIELD}{ids}
 - 각 항목에 0점·부분 점수·만점 판정 기준(criteria_zero, criteria_partial, criteria_full)을
   채점자마다 판단이 갈리지 않도록 관찰 가능한 행동으로 씁니다."""
     return [Message(role="system", content=GENERATION_SYSTEM), Message(role="user", content=user)]
@@ -225,7 +271,7 @@ def task_text(task: Task, *, with_traps: bool = True) -> str:
 ## 상황
 {task.scenario}
 
-## 지시문
+{INSTRUCTION_HEADING}
 {task.instruction}
 
 ## 첨부 자료
@@ -331,7 +377,8 @@ GRADING_SYSTEM = """\
 
 def grading(task: Task, transcript: Sequence[ChatTurn], output: str) -> list[Message]:
     log = "\n".join(
-        f"[{'응시자' if t.speaker == 'examinee' else 'AI 도구'}] {t.content}" for t in transcript
+        f"{EXAMINEE_PREFIX if t.speaker == 'examinee' else '[AI 도구]'} {t.content}"
+        for t in transcript
     ) or "(대화 없음)"
     user = f"""\
 {task_text(task)}
@@ -339,7 +386,7 @@ def grading(task: Task, transcript: Sequence[ChatTurn], output: str) -> list[Mes
 ## 채점 기준
 {rubric_text(task.rubric)}
 
-## 제출물: AI 도구 대화 기록
+{TRANSCRIPT_HEADING}
 {log}
 
 ## 제출물: 최종 산출물

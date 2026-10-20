@@ -158,7 +158,8 @@ def test_regeneration_skips_already_shown_scenarios_and_keeps_looking(
     draft = start_awaiting_selection(service, fake_gateway, db, settings)
     shown = [c.scenario for c in draft.candidates]
     writer = ScenarioWriter()
-    fake_gateway.script(Role.GENERATION, scripted_batch(shown[0], shown[1], "새 후보 " + uuid.uuid4().hex))
+    fresh = "새 후보 " + uuid.uuid4().hex
+    fake_gateway.script(Role.GENERATION, scripted_batch(shown[0], shown[1], fresh))
     fake_gateway.respond_with(Role.GENERATION, writer)
 
     again = service.regenerate_scenarios(draft.id)

@@ -23,7 +23,6 @@ graded as a normal (passing) one.
 
 from __future__ import annotations
 
-import re
 import threading
 import time
 from collections import defaultdict
@@ -32,9 +31,11 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+from task_design.domain import Component, Level
 from task_design.gateway import Role, UsageSink
 from task_design.settings import DEFAULT_GEMINI_MODEL, Settings
 from task_design.testing.fake_gateway import FakeCall, FakeGateway
+from task_design.workflow import prompts
 from task_design.workflow.schemas import (
     AttachmentBatch,
     CandidateBatch,
@@ -44,17 +45,8 @@ from task_design.workflow.schemas import (
 
 FAIL_MARKER = "실패 시연"
 
-_IDS = re.compile(r"\[과제 ID: ([0-9a-f-]{36})\]")
-
-
 def _field(prompt: str, label: str, default: str) -> str:
-    m = re.search(rf"^- {label}: (.+)$", prompt, re.MULTILINE)
-    return m.group(1).strip() if m else default
-
-
-def _section(prompt: str, title: str) -> str:
-    m = re.search(rf"^## {re.escape(title)}[^\n]*\n(.*?)(?=^## |\Z)", prompt, re.MULTILINE | re.S)
-    return m.group(1).strip() if m else ""
+    return prompts.field(prompt, label) or default
 
 
 # --- 주제 (상황 + 첨부 자료) ----------------------------------------------------------
@@ -209,10 +201,10 @@ def csv_text(theme: Theme, *, revised: bool = False) -> str:
 
 def _candidates(call: FakeCall) -> dict:
     prompt = call.prompt
-    job = _field(prompt, "직무", "사업")
-    career = _field(prompt, "경력 수준", "3년차")
-    avoid = _section(prompt, "피해야 할 상황")
-    ids = _IDS.findall(prompt)
+    job = _field(prompt, prompts.JOB_FIELD, "사업")
+    career = _field(prompt, prompts.CAREER_FIELD, "3년차")
+    avoid = prompts.section(prompt, prompts.AVOID_HEADING)
+    ids = prompts.TASK_ID_PATTERN.findall(prompt)
     out, variant = [], 0
     while len(out) < 3:
         for i, theme in enumerate(THEMES):
@@ -239,7 +231,7 @@ def _instruction(call: FakeCall) -> dict:
         "작성하라. 핵심 수치 3개 이상, 자료에서 발견한 문제점과 그 근거, 다음에 할 일 제안을 "
         "포함한다. 제출물은 AI 도구와의 대화 기록 전체와 최종 산출물이다."
     )
-    if "## 이전 지시문" in call.prompt:
+    if prompts.is_rewrite(call.prompt, Component.INSTRUCTION):
         text += (
             "\n\n작업 순서: ① 첨부 자료의 구조와 항목을 먼저 확인한다. ② 합계·중복 등 수치를 AI "
             "결과와 직접 대조한다. ③ 검증한 수치만 산출물에 쓴다. 형식은 '요약 - 근거 - 제안' "
@@ -250,7 +242,7 @@ def _instruction(call: FakeCall) -> dict:
 
 def _attachments(call: FakeCall) -> dict:
     theme = theme_of(call.prompt)
-    revised = "## 이전 첨부 자료" in call.prompt
+    revised = prompts.is_rewrite(call.prompt, Component.ATTACHMENTS)
     n = numbers(theme)
     traps = [
         {"location": f"{n.label} 행", "description": f"{n.label} 행이 한 번 더 들어간 중복 행"},
@@ -268,9 +260,9 @@ def _attachments(call: FakeCall) -> dict:
 
 
 def _rubric(call: FakeCall) -> dict:
-    revised = "## 이전 채점 기준" in call.prompt
-    m = re.search(r"competency_id는 다음 중 하나입니다: (.+)$", call.prompt, re.MULTILINE)
-    ids = [c.strip() for c in m.group(1).split(",")] if m else ["C1"]
+    revised = prompts.is_rewrite(call.prompt, Component.RUBRIC)
+    listed = prompts.field(call.prompt, prompts.COMPETENCY_IDS_FIELD)
+    ids = [c.strip() for c in listed.split(",")] if listed else ["C1"]
     sharper = " 근거가 된 행을 하나 이상 적어야 만점이다." if revised else ""
     items = [
         ("AI 결과 검증 과정", "process", 30,
@@ -332,11 +324,10 @@ def _output(level: str, theme: Theme) -> str:
 
 
 def _persona(call: FakeCall) -> dict:
-    m = re.search(r"응시자 수준: (상|중|하)", call.prompt)
-    level = m.group(1) if m else "중"
+    level = next((lv.ko for lv in Level if prompts.persona_tag(lv) in call.prompt), "중")
     theme = theme_of(call.prompt)
     asked = sum(msg.role == "assistant" for msg in call.messages)
-    asks = _asks(level, theme, _section(call.prompt, "지시문"))
+    asks = _asks(level, theme, prompts.section(call.prompt, prompts.INSTRUCTION_HEADING))
     if asked < len(asks):
         return {"action": "ask", "content": asks[asked]}
     return {"action": "submit", "content": _output(level, theme)}
@@ -370,7 +361,6 @@ _SCORES = {  # mean totals per persona tier (3 = 상, 2 = 중, 1 = 하)
     "fail": {3: 58.0, 2: 45.0, 1: 30.0},  # 상 < 70 → 풀이 불가
 }
 _JITTER = (0.0, 1.5, -1.5)
-_RUBRIC_ITEM = re.compile(r"^\d+\. \[(?:과정|산출물)\] .*?\((\d+)점, 역량", re.MULTILINE)
 _RATIONALE = {
     3: "원자료와 대조해 중복 행과 합계 오류를 찾아냈고 메모의 주장을 따로 검증했다.",
     2: "형식은 갖췄으나 수치 검증이 부족해 합계 오류를 그대로 옮겼다.",
@@ -392,14 +382,14 @@ class _DemoState:
         with self._lock:
             if FAIL_MARKER in prompt:
                 self.mode[call.draft_id] = "fail"
-            elif "목표 난이도: 상" in prompt:
+            elif prompts.field(prompt, prompts.DIFFICULTY_FIELD) == Level.HIGH.ko:
                 self.mode.setdefault(call.draft_id, "hard")
-            if any(f"## 이전 {part}" in prompt for part in ("지시문", "첨부 자료", "채점 기준")):
+            if any(prompts.is_rewrite(prompt, c) for c in prompts.PREVIOUS_HEADING):
                 self.fixes[call.draft_id] += 1
 
     def grade(self, call: FakeCall) -> dict:
-        log = _section(call.prompt, "제출물: AI 도구 대화 기록")
-        turns = log.count("[응시자]")
+        log = prompts.section(call.prompt, prompts.TRANSCRIPT_HEADING)
+        turns = log.count(prompts.EXAMINEE_PREFIX)
         tier = 3 if turns >= 3 else 2 if turns == 2 else 1
         with self._lock:
             mode = self.mode.get(call.draft_id, "pass")
@@ -408,7 +398,8 @@ class _DemoState:
             self.gradings[call.draft_id] += 1
         outcome = {"fail": "fail", "hard": "pass" if fixes else "flat"}.get(mode, "pass")
         total = max(0.0, _SCORES[outcome][tier] + _JITTER[n % len(_JITTER)])
-        points = [int(p) for p in _RUBRIC_ITEM.findall(call.prompt)] or [30, 20, 30, 20]
+        listed = prompts.RUBRIC_POINTS_PATTERN.findall(call.prompt)
+        points = [int(p) for p in listed] or [30, 20, 30, 20]
         whole = sum(points)
         return {"item_scores": [
             {"item_index": i, "score": round(min(p, total * p / whole), 1),
