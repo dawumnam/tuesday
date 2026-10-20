@@ -99,6 +99,36 @@ def test_a_failing_combination_is_reported_and_the_rest_still_run(
     assert passed.state is DraftState.AWAITING_REVIEW
 
 
+def test_an_unknown_competency_stops_the_batch_before_any_draft_starts(
+    tmp_path, capsys, db, fake_gateway, settings
+):
+    ensure_competencies(db)
+    install_verification(fake_gateway, competency_ids=["C1"])
+    combinations = [COMBINATIONS[0], {**COMBINATIONS[1], "competency_ids": ["C99"]}]
+
+    code = main(["batch", str(write_combinations(tmp_path, combinations))], settings=settings,
+                gateway=fake_gateway)
+
+    out, err = capsys.readouterr()
+    assert code == 2
+    assert "C99" in err
+    assert drafts_in_output(out) == []
+    assert fake_gateway.calls == []
+
+
+def test_batch_without_a_gemini_api_key_explains_how_to_set_one(
+    tmp_path, capsys, monkeypatch, settings
+):
+    for var in ("TD_GEMINI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+
+    code = main(["batch", str(write_combinations(tmp_path))],
+                settings=settings.model_copy(update={"gemini_api_key": None}))
+
+    assert code == 2
+    assert "TD_GEMINI_API_KEY" in capsys.readouterr().err
+
+
 def test_the_shipped_example_has_10_to_15_combinations_over_seed_competencies():
     inputs = load_combinations(EXAMPLE_BATCH_FILE)
 

@@ -23,13 +23,18 @@ from task_design.db import Database
 from task_design.gateway import ModelGateway
 from task_design.loader import load_dataset
 from task_design.model_gateway import build_gateway
-from task_design.service import TaskDesignService, UnknownCompetency
+from task_design.repositories import CompetencyRepository
+from task_design.service import TaskDesignService
 from task_design.settings import Settings
 
 # Repository-root ``seed/`` (the package is installed from ``src/``).
 DEFAULT_SEED_DIR = Path(__file__).resolve().parents[2] / "seed"
 # 12 입력 조합 over the seed 역량 체계 (C1–C8), for `task-design batch`.
 EXAMPLE_BATCH_FILE = Path(__file__).resolve().parents[2] / "examples" / "batch.json"
+
+class CliError(Exception):
+    """A user-facing failure: ``main`` prints the (Korean) message and exits 2."""
+
 
 Handler = Callable[[argparse.Namespace, Settings, ModelGateway | None], int]
 
@@ -44,7 +49,13 @@ def _resolve_gateway(
 
         # Embeddings: deterministic per-text unit vectors (sha256-seeded); rerank: identity.
         return FakeGateway(embedding_dim=settings.embedding_dim)
-    return build_gateway(settings, usage_sink=CostStore(db))
+    try:
+        return build_gateway(settings, usage_sink=CostStore(db))
+    except ValueError as e:  # google-genai: no API key in settings or the environment
+        raise CliError(
+            "Gemini API 키가 없습니다. .env 또는 환경 변수에 TD_GEMINI_API_KEY를 설정하세요. "
+            f"({e})"
+        ) from e
 
 
 def _seed(args: argparse.Namespace, settings: Settings, gateway: ModelGateway | None) -> int:
@@ -88,6 +99,12 @@ def _batch(args: argparse.Namespace, settings: Settings, gateway: ModelGateway |
         return 2
     db = Database(settings.database_url)
     try:
+        # Check every combination before running any, so a typo can't stop a batch halfway.
+        known = {c.id for c in CompetencyRepository(db).list()}
+        unknown = sorted({c for i in inputs for c in i.competency_ids} - known)
+        if unknown:
+            raise CliError(f"역량 체계에 없는 역량입니다: {', '.join(unknown)} "
+                           "(먼저 `task-design seed`로 역량 체계를 적재하세요)")
         gw = _resolve_gateway(args, settings, db, gateway)
         service = TaskDesignService(db, gw, settings)
         authors = [args.author] if args.author else [s.id for s in service.list_staff()]
@@ -96,9 +113,6 @@ def _batch(args: argparse.Namespace, settings: Settings, gateway: ModelGateway |
         try:
             items = run_batch(service, inputs, candidate=args.candidate, author_ids=authors,
                               on_done=_print_item(len(inputs)))
-        except UnknownCompetency as e:
-            print(f"{e} (먼저 `task-design seed`로 역량 체계를 적재하세요)", file=sys.stderr)
-            return 2
         finally:
             tracer = getattr(gw, "tracer", None)
             if tracer is not None:
@@ -147,7 +161,11 @@ def main(
     """Entry point. ``settings`` / ``gateway`` are injectable for tests and embedding callers."""
     args = _build_parser().parse_args(argv)
     handler: Handler = args.handler
-    return handler(args, settings or Settings(), gateway)
+    try:
+        return handler(args, settings or Settings(), gateway)
+    except CliError as e:
+        print(e, file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
