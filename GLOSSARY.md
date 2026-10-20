@@ -121,3 +121,48 @@ _Avoid_: 대폭 수정, 리라이트
 **총 작업 시간**:
 과제 1개에 대해 사람 시간(입력·상황 선택·검토 편집, 비활성 제외)과 에이전트 대기 시간(생성·검증)을 합한 시간.
 _Avoid_: 소요 시간, 리드타임
+
+## Code names
+
+코드 식별자는 영어, 과제 콘텐츠는 한국어. 아래 대응을 따른다(타입은 `task_design.domain`, 역할은 `task_design.gateway.Role`).
+
+| 용어 | 식별자 |
+|---|---|
+| 담당자 | `Staff` |
+| 작성자 / 검토자 | `author_id` / `reviewer_id` |
+| 역량 체계 / 역량 | `competency` (`competency_id`) |
+| 수준 지표 | `level indicator` |
+| 상·중·하 | `Level.HIGH` / `Level.MEDIUM` / `Level.LOW` |
+| 대상자 | `Audience` (`job`, `career_level`) |
+| 과제 | `Task` |
+| 확정 과제 | `Task` in the task DB (`TaskRepository`) |
+| 상황 | `scenario` (`Component.SCENARIO`) |
+| 지시문 | `instruction` (`Component.INSTRUCTION`) |
+| 첨부 자료 | `Attachment` (`Component.ATTACHMENTS`) |
+| 함정 | `Trap` |
+| 채점 기준 | `Rubric` (`Component.RUBRIC`) |
+| 채점 기준 항목 | `RubricItem` |
+| 과정 항목 / 산출물 항목 | `RubricItemType.PROCESS` / `RubricItemType.OUTPUT` |
+| 제출물 | submission = `MockExamResult.transcript` + `MockExamResult.output` |
+| 초안 | `Draft` |
+| 초안 상태 | `DraftState` (생성 중 `GENERATING`, 상황 선택 대기 `AWAITING_SCENARIO_SELECTION`, 검증 중 `VERIFYING`, 검토 대기 `AWAITING_REVIEW`, 확정 `CONFIRMED`, 반려 `REJECTED`) |
+| 초안 회차 | `DraftRound` |
+| 상황 후보 | `ScenarioCandidate` |
+| 모의 응시 / 모의 응시 결과 | mock exam / `MockExamResult` |
+| 응시자 페르소나 | examinee persona (`Role.EXAMINEE`) |
+| AI 도구 LLM | `Role.AI_TOOL` |
+| 채점 에이전트 / 채점 1회 | `Role.GRADING` / `Grading` |
+| 검토 에이전트 | `Role.REVIEW` |
+| 판정 | `Verdict` |
+| 풀이 가능성 / 변별력 / 채점 일관성 | `solvable` / `discriminating` / `consistent` |
+| 풀이 불가 / 변별력 부족 / 채점 불일치 | `FailureType.UNSOLVABLE` / `LOW_DISCRIMINATION` / `INCONSISTENT_GRADING` |
+| 자기 수정 루프 | self-correction loop |
+| 실패 리포트 | `FailureReport` |
+| 최종 검토 | `TaskDesignService.review` / `Review` |
+| 검토 라벨 | `ReviewLabel` (유지 `KEEP`, 부분 수정 `PARTIAL_EDIT`, 전면 재작성 `FULL_REWRITE`) |
+| 확정 / 반려 (결정) | `ReviewDecision.CONFIRM` / `ReviewDecision.REJECT` |
+| 측정 이벤트 | `MeasurementEvent` (`IntervalKind.HUMAN_ACTIVE` / `AGENT_RUN`) |
+| 총 작업 시간 | total work time (`Metrics.mean_total_work_minutes`) |
+| 비용 | `Cost`, per call `gateway.Usage` |
+| 과제 설계 서비스 | `TaskDesignService` |
+| 모델 게이트웨이 | `ModelGateway` |
