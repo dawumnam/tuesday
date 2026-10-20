@@ -1,7 +1,7 @@
 """TaskRepository against real Postgres with controlled FakeGateway vectors.
 
-The session DB is shared and never truncated, so each test uses its own random
-direction in embedding space and its own distinctive wording.
+Each test starts from empty task/competency tables (``empty_repositories``)
+and uses its own random direction in embedding space.
 """
 
 from __future__ import annotations
@@ -53,8 +53,8 @@ def make_task(scenario: str, instruction: str = "보고서를 작성하라.") ->
 
 
 @pytest.fixture
-def repo(db, fake_gateway, settings) -> TaskRepository:
-    return TaskRepository(db, fake_gateway, settings)
+def repo(empty_repositories, fake_gateway, settings) -> TaskRepository:
+    return TaskRepository(empty_repositories, fake_gateway, settings)
 
 
 @pytest.fixture
@@ -98,6 +98,37 @@ def test_semantic_only_match_is_found(repo, fake_gateway, dim):
     semantic_text = f"클레임을 제기한 거래처에 보낼 회신문을 AI로 손보는 상황 {uuid.uuid4().hex}"
     fake_gateway.set_embedding(semantic_text, with_cosine(q, 0.97))
     semantic_id = repo.add(make_task(semantic_text, instruction="회신문을 완성하라."))
+
+    hits = repo.hybrid_search(query, k=5)
+
+    assert semantic_id in [t.id for t in hits]
+
+
+def test_tasks_without_keyword_overlap_do_not_crowd_out_a_semantic_match(repo, fake_gateway, dim):
+    query = "신제품 출시 보도자료 검토"
+    q = random_unit(dim)
+    fake_gateway.set_embedding(query, q)
+
+    # Keyword matches with unrelated meaning.
+    for i in range(3):
+        text = f"신제품 출시 보도자료 검토 회의실 예약 {i} {uuid.uuid4().hex}"
+        fake_gateway.set_embedding(text, with_cosine(q, 0.0))
+        repo.add(make_task(text))
+
+    # Tasks sharing no wording with the query and only faintly related in
+    # meaning. Their ids sort first, so they win every keyword-rank tie.
+    for i in range(25):
+        text = f"무관한 과제 {i} {uuid.uuid4().hex}"
+        fake_gateway.set_embedding(text, with_cosine(q, 0.2))
+        repo.add(make_task(text).model_copy(update={"id": uuid.UUID(int=i + 1)}))
+
+    semantic_text = f"새 상품을 알리는 언론 배포문을 AI로 손보는 상황 {uuid.uuid4().hex}"
+    fake_gateway.set_embedding(semantic_text, with_cosine(q, 0.97))
+    semantic_id = repo.add(
+        make_task(semantic_text, instruction="배포문을 완성하라.").model_copy(
+            update={"id": uuid.UUID("ffffffff-ffff-4fff-bfff-ffffffffffff")}
+        )
+    )
 
     hits = repo.hybrid_search(query, k=5)
 
