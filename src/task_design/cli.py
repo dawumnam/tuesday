@@ -3,7 +3,7 @@
 Subcommands register themselves in ``_build_parser`` via ``add_parser`` + a handler
 ``(args, settings, gateway) -> int``. Ticket 11 adds ``batch`` the same way.
 
-    task-design seed            # load seed/ with the configured (real) gateway
+    task-design seed            # load seed/; embeddings via the real gateway (TD_GEMINI_API_KEY)
     task-design seed --fake     # offline: deterministic hash-based embeddings
     task-design seed --dir path # another dataset with the same layout (story 50)
 """
@@ -15,9 +15,11 @@ import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
+from task_design.costs import CostStore
 from task_design.db import Database
 from task_design.gateway import ModelGateway
 from task_design.loader import load_dataset
+from task_design.model_gateway import build_gateway
 from task_design.settings import Settings
 
 # Repository-root ``seed/`` (the package is installed from ``src/``).
@@ -26,18 +28,8 @@ DEFAULT_SEED_DIR = Path(__file__).resolve().parents[2] / "seed"
 Handler = Callable[[argparse.Namespace, Settings, ModelGateway | None], int]
 
 
-def build_gateway(settings: Settings) -> ModelGateway:
-    """The real gateway for the configured routing.
-
-    TODO(ticket 02): return the Gemini gateway (with its model_costs UsageSink) here.
-    """
-    raise NotImplementedError(
-        "실제 모델 게이트웨이가 아직 없습니다(티켓 02). 오프라인으로는 --fake 를 쓰세요."
-    )
-
-
 def _resolve_gateway(
-    args: argparse.Namespace, settings: Settings, gateway: ModelGateway | None
+    args: argparse.Namespace, settings: Settings, db: Database, gateway: ModelGateway | None
 ) -> ModelGateway:
     if gateway is not None:
         return gateway
@@ -46,14 +38,19 @@ def _resolve_gateway(
 
         # Embeddings: deterministic per-text unit vectors (sha256-seeded); rerank: identity.
         return FakeGateway(embedding_dim=settings.embedding_dim)
-    return build_gateway(settings)
+    return build_gateway(settings, usage_sink=CostStore(db))
 
 
 def _seed(args: argparse.Namespace, settings: Settings, gateway: ModelGateway | None) -> int:
-    gw = _resolve_gateway(args, settings, gateway)
     db = Database(settings.database_url)
     try:
-        n_competencies, n_tasks = load_dataset(args.dir, db, gw, settings)
+        gw = _resolve_gateway(args, settings, db, gateway)
+        try:
+            n_competencies, n_tasks = load_dataset(args.dir, db, gw, settings)
+        finally:
+            tracer = getattr(gw, "tracer", None)
+            if tracer is not None:
+                tracer.flush()
     finally:
         db.close()
     print(f"역량 {n_competencies}개, 과제 {n_tasks}개를 적재했습니다 ({args.dir}).")

@@ -15,6 +15,7 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 from task_design.cli import DEFAULT_SEED_DIR, main
 from task_design.db import Database
+from task_design.gateway import Role
 from task_design.domain import Level, Rubric, RubricItemType, Task
 from task_design.migrate import apply_migrations
 from task_design.repositories import CompetencyRepository, TaskRepository
@@ -97,6 +98,16 @@ def test_seed_is_idempotent(seeded_db, fresh_url, monkeypatch):
     assert main(["seed", "--fake"]) == 0
 
     assert (_task_count(seeded_db), CompetencyRepository(seeded_db).list()) == before
+
+
+def test_seed_uses_an_injected_gateway_for_embeddings(seeded_db, fresh_url, monkeypatch):
+    monkeypatch.setenv("TD_DATABASE_URL", fresh_url)
+    gateway = FakeGateway(embedding_dim=Settings(_env_file=None).embedding_dim)
+
+    assert main(["seed"], gateway=gateway) == 0
+
+    embedded = [text for call in gateway.calls_for(Role.EMBEDDING) for text in call.texts]
+    assert sorted(embedded) == sorted(t.scenario for t in _seed_tasks())
 
 
 def test_hybrid_search_over_seeded_tasks_returns_results(seeded_db):
