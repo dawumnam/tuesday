@@ -155,7 +155,7 @@ def test_verdict_reports_each_failure_type_and_the_draft_still_goes_to_review(
     draft = start_awaiting_review(service, fake_gateway, db, settings, scores=scores)
 
     assert draft.state is DraftState.AWAITING_REVIEW
-    [round1] = draft.rounds
+    round1 = draft.rounds[0]
     assert round1.verdict.failures == failures
     assert round1.verdict.passed is (failures == [])
 

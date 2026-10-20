@@ -162,13 +162,22 @@ def instruction(
 
 
 def attachments(
-    input: DraftInput, competencies: Sequence[Competency], scenario: str, instruction: str
+    input: DraftInput,
+    competencies: Sequence[Competency],
+    scenario: str,
+    instruction: str,
+    *,
+    previous: Sequence[Attachment] = (),
+    issues: Sequence[str] = (),
 ) -> list[Message]:
+    """첨부 자료 prompt. ``previous`` + ``issues``: rewrite the existing ones (and their 함정)."""
+    prev = (f"\n\n## 이전 첨부 자료\n{_attachments_text(previous, with_traps=True)}"
+            if previous else "")
     user = f"""\
 {_brief(input, competencies, scenario)}
 
 ## 지시문
-{instruction}
+{instruction}{prev}{_issues_block("고쳐야 할 점", issues)}
 
 ## 요청
 과제에 필요한 텍스트 첨부 자료(attachments)를 1~3개 작성하세요.

@@ -95,6 +95,7 @@ class Stage(_KoEnum):
     MOCK_EXAM = "mock_exam"
     GRADING = "grading"
     JUDGING = "judging"
+    FIXING = "fixing"  # 자기 수정: regenerating one component after a failed verdict
 
 
 class PersonaStatus(_KoEnum):
@@ -147,6 +148,7 @@ _KO: dict[StrEnum, str] = {
     Stage.MOCK_EXAM: "모의 응시",
     Stage.GRADING: "채점",
     Stage.JUDGING: "판정",
+    Stage.FIXING: "자기 수정",
     PersonaStatus.PENDING: "대기",
     PersonaStatus.RUNNING: "응시 중",
     PersonaStatus.DONE: "제출 완료",

@@ -17,7 +17,6 @@ from task_design.domain import (
     ChatTurn,
     Component,
     DraftRound,
-    DraftState,
     Grading,
     Level,
     MockExamResult,
@@ -181,13 +180,3 @@ def judge(deps: Deps, state: WorkflowState) -> dict[str, Any]:
     return {"verdict": dump(verdict)}
 
 
-def finish(deps: Deps, state: WorkflowState) -> dict[str, Any]:
-    """검토 대기: the draft goes to 최종 검토 with its current task and rounds."""
-    deps.drafts.set_task(draft_id(state), task(state))
-    deps.drafts.set_state(draft_id(state), DraftState.AWAITING_REVIEW)
-    return {}
-
-
-def route_after_verdict(state: WorkflowState) -> str:
-    """Ticket 06: always "finish". Ticket 07 returns "fix" while the loop may continue."""
-    return "finish"
