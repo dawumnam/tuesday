@@ -4,11 +4,22 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
+from task_design.cli import DEFAULT_SEED_DIR
 from task_design.costs import CostStore
 from task_design.demo import FAIL_MARKER, build_demo_gateway, theme_of
 from task_design.domain import DraftState, Level
+from task_design.gateway import Role
+from task_design.loader import load_dataset
+from task_design.repositories import TaskRepository
 from task_design.service import TaskDesignService
-from task_design.testing.workflow import ensure_competencies, make_input, seed_similar_tasks
+from task_design.testing.workflow import (
+    ensure_competencies,
+    make_input,
+    make_task,
+    seed_similar_tasks,
+)
 
 HANGUL = re.compile(r"[가-힣]")
 
@@ -86,3 +97,54 @@ def test_demo_attachments_and_submissions_fit_the_chosen_scenario(db, settings):
     high = next(r for r in done.rounds[0].mock_exam_results if r.persona_level is Level.HIGH)
     assert theme.deliverable in high.output
     assert theme.header in high.transcript[1].content  # the AI 도구 read this theme's CSV
+
+
+# --- 데모 임베딩: shared wording → higher cosine ----------------------------------------
+
+
+def _cos(a, b):
+    return sum(x * y for x, y in zip(a, b, strict=True))
+
+
+def test_demo_embeddings_give_higher_cosine_to_texts_that_share_wording(settings):
+    a = "물류센터 냉동창고 온도기록에서 이상치를 찾는 상황"
+    b = "냉동창고 온도기록의 이상치를 점검하는 업무"
+    c = "신규 입사자를 위한 온보딩 체크리스트를 만드는 상황"
+    [va, vb, vc] = build_demo_gateway(settings, delay=0).embed([a, b, c])
+
+    assert _cos(va, va) == pytest.approx(1.0)
+    assert _cos(va, vb) > 0.4
+    assert _cos(va, vc) < 0.25
+    assert _cos(va, vb) > _cos(va, vc) + 0.2
+    assert build_demo_gateway(settings, delay=0).embed([a]) == [va]  # deterministic
+
+
+def test_demo_candidates_over_the_seed_dataset_are_not_rejected_as_duplicates(
+    empty_repositories, settings
+):
+    db = empty_repositories
+    gateway = build_demo_gateway(settings, usage_sink=CostStore(db), delay=0)
+    load_dataset(DEFAULT_SEED_DIR, db, gateway, settings)
+    service = TaskDesignService(db, gateway, settings)
+
+    draft = service.start(make_input(), author_id=1)
+
+    assert draft.state is DraftState.AWAITING_SCENARIO_SELECTION
+    assert len(draft.candidates) == 3
+    generations = [c for c in gateway.calls_for(Role.GENERATION) if c.draft_id == draft.id]
+    assert len(generations) == 1  # no candidate was dropped as a duplicate
+
+
+def test_stale_task_embeddings_are_refreshed_with_the_demo_embedding(
+    empty_repositories, fake_gateway, settings
+):
+    db = empty_repositories
+    old = TaskRepository(db, fake_gateway, settings)  # hash-based vectors
+    ids = [old.add(make_task(f"분기 매출 보고서 검증 상황 {i}")) for i in range(3)]
+    demo = TaskRepository(db, build_demo_gateway(settings, delay=0), settings)
+
+    assert demo.refresh_stale_embeddings() == 3
+    assert demo.refresh_stale_embeddings() == 0  # cheap no-op once current
+    for task_id in ids:
+        scenario = demo.get(task_id).scenario
+        assert task_id in [m.task.id for m in demo.find_duplicates(scenario, threshold=0.999)]

@@ -89,6 +89,17 @@ def test_seed_uses_an_injected_gateway_for_embeddings(seeded_db, fresh_url, monk
     assert sorted(embedded) == sorted(t.scenario for t in _seed_tasks())
 
 
+def test_fake_seed_embeds_like_the_demo_gateway(seeded_db):
+    from task_design.demo import build_demo_gateway
+
+    settings = Settings(_env_file=None)
+    demo = TaskRepository(seeded_db, build_demo_gateway(settings, delay=0), settings)
+
+    assert demo.refresh_stale_embeddings() == 0
+    seed = _seed_tasks()[0]
+    assert seed.id in [m.task.id for m in demo.find_duplicates(seed.scenario, threshold=0.999)]
+
+
 def test_hybrid_search_over_seeded_tasks_returns_results(seeded_db):
     results = _repo(seeded_db).hybrid_search("매출 데이터의 합계와 이상값을 검증", k=5)
 

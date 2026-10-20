@@ -7,7 +7,9 @@ DB through ``get_draft``.
 Environment:
 - ``TD_FAKE_GATEWAY=1``: 데모 모드. ``task_design.demo`` answers every model call
   offline with Korean demo content; the seed 역량 체계 and 과제 are loaded if the DB
-  has no competencies yet. ``TD_FAKE_DELAY`` (seconds per model call, default 0.6)
+  has no competencies yet, and stored task embeddings are refreshed if they came
+  from another embedder (demo vectors are character n-gram based, so shared wording
+  means higher cosine). ``TD_FAKE_DELAY`` (seconds per model call, default 0.6)
   keeps progress watchable. A ``Stepper`` is installed as the run observer:
   the 진행 screen offers 단계별 진행 / 자동 진행 (``TD_DEMO_STEP_MODE=step|auto``,
   default step) and shows how 유사 과제 검색 and 중복 검사 reached their result.
@@ -103,7 +105,7 @@ def _build() -> AppRuntime:
         from task_design.cli import DEFAULT_SEED_DIR
         from task_design.demo import build_demo_gateway
         from task_design.loader import load_dataset
-        from task_design.repositories import CompetencyRepository
+        from task_design.repositories import CompetencyRepository, TaskRepository
 
         gateway = build_demo_gateway(
             settings, usage_sink=CostStore(db),
@@ -111,6 +113,10 @@ def _build() -> AppRuntime:
         )
         if not CompetencyRepository(db).list():
             load_dataset(DEFAULT_SEED_DIR, db, gateway, settings)
+        # Tasks embedded by an older demo embedder (or the real one) are re-embedded.
+        refreshed = TaskRepository(db, gateway, settings).refresh_stale_embeddings()
+        if refreshed:
+            log.warning("re-embedded %d tasks with the demo embedding", refreshed)
         stepper = Stepper(default_mode=settings.demo_step_mode)
     else:
         from task_design.model_gateway import build_gateway

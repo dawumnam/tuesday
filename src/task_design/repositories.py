@@ -124,6 +124,36 @@ class TaskRepository:
             )
         return task_id
 
+    def refresh_stale_embeddings(self, *, batch: int = 64) -> int:
+        """Re-embed every task if the stored embeddings came from another embedder.
+
+        Cheap check: the task with the lowest id is re-embedded and compared with
+        its stored vector; if they match, nothing else happens. Returns the number
+        of tasks re-embedded. For 데모 모드 (offline embeddings, so a full re-embed
+        costs nothing); with a paid gateway each call spends an embedding request.
+        """
+        with self._db.connection() as conn:
+            probe = conn.execute("SELECT id, scenario FROM tasks ORDER BY id LIMIT 1").fetchone()
+            if probe is None:
+                return 0
+            [v] = self._gateway.embed([probe[1]])
+            [same] = conn.execute(
+                "SELECT 1 - (embedding <=> %s::vector) FROM tasks WHERE id = %s",
+                (_vector_literal(v), probe[0]),
+            ).fetchone()
+            if same is not None and same >= 0.9999:
+                return 0
+            rows = conn.execute("SELECT id, scenario FROM tasks ORDER BY id").fetchall()
+            for i in range(0, len(rows), batch):
+                chunk = rows[i:i + batch]
+                vectors = self._gateway.embed([scenario for _, scenario in chunk])
+                for (task_id, _), vec in zip(chunk, vectors, strict=True):
+                    conn.execute(
+                        "UPDATE tasks SET embedding = %s::vector WHERE id = %s",
+                        (_vector_literal(vec), task_id),
+                    )
+        return len(rows)
+
     # --- reads -------------------------------------------------------------------
 
     def hybrid_search(

@@ -16,6 +16,10 @@ through without an API key:
   난이도 상 → round 1 fails 변별력 and one 자기 수정 fixes it; a memo containing
   ``FAIL_MARKER`` → never passes, ending with a 실패 리포트; otherwise round 1 passes.
 
+- Embeddings: ``ngram_embedding`` (hashed character bigrams/trigrams), so texts that
+  share wording have a higher cosine and the 벡터 순위 / 중복 검사 numbers read
+  sensibly. ``task-design seed --fake`` embeds the same way.
+
 ``delay`` seconds are slept before every completion so progress is watchable.
 Per-draft outcome state lives in memory: after an app restart a resumed draft is
 graded as a normal (passing) one.
@@ -34,7 +38,7 @@ from uuid import UUID
 from task_design.domain import Component, Level
 from task_design.gateway import Role, UsageSink
 from task_design.settings import DEFAULT_GEMINI_MODEL, Settings
-from task_design.testing.fake_gateway import FakeCall, FakeGateway
+from task_design.testing.fake_gateway import FakeCall, FakeGateway, ngram_embedding
 from task_design.workflow import prompts
 from task_design.workflow.schemas import (
     AttachmentBatch,
@@ -416,6 +420,7 @@ def build_demo_gateway(
         embedding_dim=settings.embedding_dim,
         usage_sink=usage_sink,
         price=settings.prices.get(DEFAULT_GEMINI_MODEL),
+        embedder=ngram_embedding,
     )
     state = _DemoState()
     generation = {CandidateBatch: _candidates, InstructionDraft: _instruction,

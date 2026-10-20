@@ -4,7 +4,7 @@ Subcommands register themselves in ``_build_parser`` via ``add_parser`` + a hand
 ``(args, settings, gateway) -> int``.
 
     task-design seed            # load seed/; embeddings via the real gateway (TD_GEMINI_API_KEY)
-    task-design seed --fake     # offline: deterministic hash-based embeddings
+    task-design seed --fake     # offline: the demo's character n-gram embeddings
     task-design seed --dir path # another dataset with the same layout (story 50)
     task-design batch examples/batch.json               # 일괄 생성 → drafts in 검토 대기
     task-design batch examples/batch.json --candidate 2 # pick 상황 후보 2 instead of 1
@@ -45,10 +45,10 @@ def _resolve_gateway(
     if gateway is not None:
         return gateway
     if getattr(args, "fake", False):
-        from task_design.testing.fake_gateway import FakeGateway
+        from task_design.testing.fake_gateway import FakeGateway, ngram_embedding
 
-        # Embeddings: deterministic per-text unit vectors (sha256-seeded); rerank: identity.
-        return FakeGateway(embedding_dim=settings.embedding_dim)
+        # Embeddings: the 데모 모드 gateway's content-based ngram vectors; rerank: identity.
+        return FakeGateway(embedding_dim=settings.embedding_dim, embedder=ngram_embedding)
     try:
         return build_gateway(settings, usage_sink=CostStore(db))
     except ValueError as e:  # google-genai: no API key in settings or the environment
@@ -133,7 +133,8 @@ def _build_parser() -> argparse.ArgumentParser:
     seed = sub.add_parser("seed", help="합성 역량 체계와 과제를 DB에 적재 (멱등)")
     seed.add_argument("--dir", type=Path, default=DEFAULT_SEED_DIR, help="데이터셋 디렉터리")
     seed.add_argument(
-        "--fake", action="store_true", help="FakeGateway 사용 (해시 기반 결정적 임베딩, 오프라인)"
+        "--fake", action="store_true",
+        help="FakeGateway 사용 (데모 모드와 같은 글자 n-gram 임베딩, 오프라인)",
     )
     seed.set_defaults(handler=_seed)
 

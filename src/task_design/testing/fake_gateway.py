@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import math
 import random
+import re
 import threading
 from collections import defaultdict, deque
 from collections.abc import Callable, Sequence
@@ -77,8 +78,12 @@ class FakeGateway:
         embedding_dim: int = 768,
         usage_sink: UsageSink | None = None,
         price: ModelPrice | None = None,
+        embedder: Callable[[str, int], Vector] | None = None,
     ) -> None:
+        """``embedder(text, dim)`` embeds texts without a ``set_embedding`` vector
+        (default: ``hash_embedding``; ``ngram_embedding`` for 데모 모드 and ``seed --fake``)."""
         self.embedding_dim = embedding_dim
+        self.embedder = embedder or hash_embedding
         self.usage_sink = usage_sink
         self.price = price  # prices every call's usage (default: cost 0)
         self.calls: list[FakeCall] = []
@@ -194,12 +199,7 @@ class FakeGateway:
         return schema.model_validate(raw)
 
     def _default_vector(self, text: str) -> Vector:
-        """Deterministic pseudo-random unit vector per text (unrelated texts ≈ orthogonal)."""
-        seed = int.from_bytes(hashlib.sha256(text.encode()).digest()[:8], "big")
-        rng = random.Random(seed)
-        v = [rng.gauss(0.0, 1.0) for _ in range(self.embedding_dim)]
-        norm = math.sqrt(sum(x * x for x in v)) or 1.0
-        return [x / norm for x in v]
+        return self.embedder(text, self.embedding_dim)
 
     def _record(self, call: FakeCall, result: Any, input_tokens: int, output_tokens: int) -> None:
         call.result = result
@@ -217,3 +217,40 @@ class FakeGateway:
             self.usage.append(usage)
         if self.usage_sink is not None:
             self.usage_sink.record(usage)
+
+
+def hash_embedding(text: str, dim: int) -> Vector:
+    """Deterministic pseudo-random unit vector per text (unrelated texts ≈ orthogonal).
+
+    Tests rely on this: any two texts are near-orthogonal unless ``set_embedding``
+    says otherwise.
+    """
+    seed = int.from_bytes(hashlib.sha256(text.encode()).digest()[:8], "big")
+    rng = random.Random(seed)
+    v = [rng.gauss(0.0, 1.0) for _ in range(dim)]
+    norm = math.sqrt(sum(x * x for x in v)) or 1.0
+    return [x / norm for x in v]
+
+
+_WORD = re.compile(r"[0-9a-z가-힣]+")
+
+
+def ngram_embedding(text: str, dim: int) -> Vector:
+    """Content-based unit vector: a hashed bag of each word's character bigrams and
+    trigrams (a one-character word counts as itself), L2-normalised.
+
+    Texts that share wording get a higher cosine, unrelated texts stay near 0, so
+    the 데모 모드's vector ranking and 중복 검사 numbers mean something. Deterministic
+    and offline. Changing it changes every stored demo embedding (see
+    ``TaskRepository.refresh_stale_embeddings``).
+    """
+    v = [0.0] * dim
+    for word in _WORD.findall(text.lower()):
+        grams = [word] if len(word) == 1 else [
+            word[i:i + n] for n in (2, 3) for i in range(len(word) - n + 1)
+        ]
+        for gram in grams:
+            h = int.from_bytes(hashlib.blake2b(gram.encode(), digest_size=8).digest(), "big")
+            v[h % dim] += 1.0 if (h >> 32) & 1 else -1.0
+    norm = math.sqrt(sum(x * x for x in v))
+    return [x / norm for x in v] if norm else hash_embedding(text, dim)
