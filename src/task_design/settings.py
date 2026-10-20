@@ -19,9 +19,29 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from task_design.gateway import Role
 
-# Placeholder model IDs: ticket 02 confirms the real API IDs.
+# Confirmed against Google's docs on 2026-10-20: see docs/research/model-ids.md.
 DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
-DEFAULT_GEMINI_EMBEDDING_MODEL = "gemini-embedding-001"
+DEFAULT_GEMINI_EMBEDDING_MODEL = "gemini-embedding-2"
+
+
+class ModelPrice(BaseModel):
+    """USD per 1M tokens. Output includes thinking tokens (Gemini bills them as output)."""
+
+    input_usd_per_mtok: float
+    output_usd_per_mtok: float = 0.0
+
+    def cost(self, input_tokens: int, output_tokens: int) -> float:
+        return (
+            input_tokens * self.input_usd_per_mtok + output_tokens * self.output_usd_per_mtok
+        ) / 1_000_000
+
+
+# Gemini API paid tier, text input, as listed on 2026-10-20. gemini-3.8-flash
+# doubles to 1.50 / 7.50 from 2027-01-01 (override with TD_PRICES).
+DEFAULT_PRICES = {
+    DEFAULT_GEMINI_MODEL: ModelPrice(input_usd_per_mtok=0.75, output_usd_per_mtok=3.75),
+    DEFAULT_GEMINI_EMBEDDING_MODEL: ModelPrice(input_usd_per_mtok=0.20),
+}
 
 
 class Provider(StrEnum):
@@ -89,6 +109,11 @@ class Settings(BaseSettings):
     use_local_llm: bool = False
     local_llm_url: str | None = None  # placeholder; ticket 12
     local_llm_model: str | None = None  # placeholder; ticket 12
+
+    schema_retries: int = 2  # extra attempts when output fails schema validation
+    # model id → price; unknown models are recorded at cost 0.
+    prices: dict[str, ModelPrice] = dict(DEFAULT_PRICES)
+    gemini_api_key: str | None = None  # TD_GEMINI_API_KEY; falls back to GEMINI_API_KEY
 
     langfuse_host: str = "http://localhost:3300"
     langfuse_public_key: str | None = None
