@@ -7,6 +7,7 @@ import uuid
 
 import pytest
 
+from task_design.db import Database
 from task_design.domain import (
     Component,
     DraftState,
@@ -20,13 +21,15 @@ from task_design.domain import (
 from task_design.gateway import Role
 from task_design.service import TaskDesignService, UnknownCompetency
 from task_design.testing.workflow import (
+    Grader,
     Personas,
     install_verification,
     make_input,
     start_awaiting_review,
     start_awaiting_selection,
+    submission_level,
 )
-from task_design.workflow import UnknownCandidate
+from task_design.workflow import InvalidDraftState, UnknownCandidate
 
 
 def test_start_rejects_competencies_not_in_the_framework(service, fake_gateway):
@@ -214,3 +217,50 @@ def test_a_persona_gets_at_most_six_messages_to_the_ai_tool(service, fake_gatewa
     assert len(asked) == settings.max_examinee_turns == 6
     assert high.output
     assert len(high.gradings) == 3
+
+
+def test_a_run_that_crashed_mid_grading_resumes_from_its_checkpoint_after_a_restart(
+    fake_gateway, db, settings
+):
+    scores = {H: 85, M: 60, L: 30}
+    grader = Grader(scores)
+    crashed = threading.Event()
+
+    def crash_once_while_grading_low(call):
+        if submission_level(call) is Level.LOW and not crashed.is_set():
+            crashed.set()
+            raise RuntimeError("process killed")
+        return grader(call)
+
+    fake_gateway.respond_with(Role.GRADING, crash_once_while_grading_low)
+    stuck = start_awaiting_review(TaskDesignService(db, fake_gateway, settings),
+                                  fake_gateway, db, settings, scores=scores)
+    assert stuck.state is DraftState.VERIFYING
+    assert stuck.error
+    assert stuck.rounds == []
+    generation_calls = len(fake_gateway.calls_for(Role.GENERATION))
+    persona_calls = len(fake_gateway.calls_for(Role.EXAMINEE))
+
+    restarted_db = Database(settings.database_url)
+    try:
+        resumed = TaskDesignService(restarted_db, fake_gateway, settings).retry(stuck.id)
+    finally:
+        restarted_db.close()
+
+    assert resumed.state is DraftState.AWAITING_REVIEW
+    assert resumed.error is None
+    assert resumed.task == stuck.task
+    [round1] = resumed.rounds
+    assert round1.verdict.passed
+    assert {r.persona_level: r.mean_score for r in round1.mock_exam_results} == scores
+    assert all(len(r.gradings) == 3 for r in round1.mock_exam_results)
+    # finished work was not redone
+    assert len(fake_gateway.calls_for(Role.GENERATION)) == generation_calls
+    assert len(fake_gateway.calls_for(Role.EXAMINEE)) == persona_calls
+
+
+def test_retry_is_refused_for_a_draft_that_has_not_failed(service, fake_gateway, db, settings):
+    draft = start_awaiting_review(service, fake_gateway, db, settings)
+
+    with pytest.raises(InvalidDraftState):
+        service.retry(draft.id)

@@ -122,6 +122,16 @@ class TaskDesignService:
         )
         return self.get_draft(draft_id)
 
+    def retry(self, draft_id: UUID) -> Draft:
+        """Re-run a draft whose workflow run failed (``Draft.error`` set), from its last
+        checkpoint; work that finished before the failure is not redone.
+
+        Raises ``InvalidDraftState`` if the draft's last run did not fail.
+        """
+        self._drafts.claim_retry(draft_id)
+        self._run_graph(lambda: self._workflow.retry(draft_id))
+        return self.get_draft(draft_id)
+
     def review(
         self,
         draft_id: UUID,

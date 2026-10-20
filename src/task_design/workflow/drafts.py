@@ -134,6 +134,21 @@ class DraftStore:
             )
         raise UnknownCandidate(f"{candidate_id} is not a current 상황 후보 of draft {draft_id}")
 
+    def claim_retry(self, draft_id: UUID) -> None:
+        """Clear the error of a failed run so it can be retried; atomic, so one retry wins.
+
+        Raises ``InvalidDraftState`` if the draft's last run did not fail.
+        """
+        with self._db.connection() as conn:
+            updated = conn.execute(
+                "UPDATE drafts SET error = NULL, updated_at = now() "
+                "WHERE id = %s AND error IS NOT NULL",
+                (draft_id,),
+            ).rowcount
+        if not updated:
+            self.get(draft_id)  # raises DraftNotFound
+            raise InvalidDraftState("실패한 실행이 없어 다시 시도할 수 없습니다.")
+
     def set_state(self, draft_id: UUID, state: DraftState) -> None:
         self._update(draft_id, "state = %s, stage = NULL", state.value)
 
