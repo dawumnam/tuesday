@@ -107,6 +107,10 @@ class Settings(BaseSettings):
 
     embedding_dim: int = 768
 
+    # 성공 기준 (dashboard targets)
+    pass_ratio_target: float = 0.70  # 전면 재작성 없이 통과한 비율 ≥ this
+    work_minutes_target: float = 42.0  # 과제 1개당 총 작업 시간 ≤ this
+
     routing: Routing = Routing()
     use_local_llm: bool = False
     local_llm_url: str | None = None  # placeholder; ticket 12
@@ -120,6 +124,8 @@ class Settings(BaseSettings):
     langfuse_host: str = "http://localhost:3300"
     langfuse_public_key: str | None = None
     langfuse_secret_key: str | None = None
+    # Langfuse project id (from the project URL), for per-draft trace links in metrics.
+    langfuse_project_id: str | None = None
 
     def route(self, role: Role) -> RoleConfig:
         """Effective config for a role, after applying the `use_local_llm` switch."""

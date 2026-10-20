@@ -15,7 +15,8 @@ way to script calls that run in parallel (e.g. the three personas): inspect
 ``call.messages`` and answer accordingly instead of relying on queue order.
 
 Every call is recorded in ``fake.calls``; token usage in ``fake.usage`` and, if
-given, forwarded to ``usage_sink`` (same seam the real gateway uses).
+given, forwarded to ``usage_sink`` (same seam the real gateway uses), priced by
+``price`` if given.
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from task_design.gateway import Message, Role, Usage, UsageSink, Vector
+from task_design.settings import ModelPrice
 
 FAKE_PROVIDER = "fake"
 FAKE_MODEL = "fake-model"
@@ -70,9 +72,15 @@ def _estimate_tokens(text: str) -> int:
 
 
 class FakeGateway:
-    def __init__(self, embedding_dim: int = 768, usage_sink: UsageSink | None = None) -> None:
+    def __init__(
+        self,
+        embedding_dim: int = 768,
+        usage_sink: UsageSink | None = None,
+        price: ModelPrice | None = None,
+    ) -> None:
         self.embedding_dim = embedding_dim
         self.usage_sink = usage_sink
+        self.price = price  # prices every call's usage (default: cost 0)
         self.calls: list[FakeCall] = []
         self.usage: list[Usage] = []
         self._queues: dict[Role, deque[Any]] = defaultdict(deque)
@@ -202,6 +210,7 @@ class FakeGateway:
             model=FAKE_MODEL,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            estimated_cost_usd=self.price.cost(input_tokens, output_tokens) if self.price else 0.0,
         )
         with self._lock:
             self.calls.append(call)

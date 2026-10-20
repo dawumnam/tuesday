@@ -55,6 +55,14 @@ def trace_id_for(draft_id: UUID) -> str:
     return str(draft_id)
 
 
+def trace_url(settings: Settings, draft_id: UUID) -> str | None:
+    """Link to a draft's trace in the Langfuse UI, or None without ``langfuse_project_id``."""
+    if not settings.langfuse_project_id:
+        return None
+    host = settings.langfuse_host.rstrip("/")
+    return f"{host}/project/{settings.langfuse_project_id}/traces/{trace_id_for(draft_id)}"
+
+
 class LangfuseTracer:
     def __init__(
         self,

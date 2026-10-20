@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -16,6 +18,7 @@ from task_design.domain import (
     DraftInput,
     DraftState,
     Interval,
+    IntervalKind,
     Metrics,
     Review,
     ReviewDecision,
@@ -24,6 +27,7 @@ from task_design.domain import (
     Task,
 )
 from task_design.gateway import ModelGateway
+from task_design.measurement import MeasurementStore, compute_metrics
 from task_design.repositories import CompetencyRepository, TaskRepository
 from task_design.settings import Settings
 from task_design.workflow import Deps, DraftStore, Workflow
@@ -32,6 +36,9 @@ from task_design.workflow import Deps, DraftStore, Workflow
 # passes e.g. ``executor.submit`` so start/regenerate return immediately and
 # progress is observed by polling ``get_draft``.
 GraphRunner = Callable[[Callable[[], None]], Any]
+
+
+log = logging.getLogger(__name__)
 
 
 def _run_inline(job: Callable[[], None]) -> None:
@@ -54,6 +61,30 @@ class InvalidEditedTask(ValueError):
     """The reviewer's 수정본 breaks a domain rule."""
 
 
+class UnknownStaff(LookupError):
+    """No 담당자 with that id."""
+
+
+class InvalidActivityInterval(ValueError):
+    """A 사람 활성 구간 that is malformed, ends before it starts, or has no time zone."""
+
+
+class InvalidPeriod(ValueError):
+    """The metrics period is malformed (missing bounds, end before start, no time zone)."""
+
+
+def _interval(value: Interval | dict[str, Any], error: type[ValueError], what: str) -> Interval:
+    try:
+        interval = Interval.model_validate(
+            value.model_dump() if isinstance(value, Interval) else value
+        )
+    except ValidationError as e:
+        raise error(f"{what}이 올바르지 않습니다. 시작과 끝을 주고, 끝은 시작보다 늦어야 합니다.") from e
+    if interval.start.tzinfo is None or interval.end.tzinfo is None:
+        raise error(f"{what}의 시작과 끝에는 시간대가 있어야 합니다.")
+    return interval
+
+
 class TaskDesignService:
     def __init__(
         self,
@@ -62,11 +93,14 @@ class TaskDesignService:
         settings: Settings,
         *,
         run_graph: GraphRunner = _run_inline,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self.db = db
         self.gateway = gateway
         self.settings = settings
         self._run_graph = run_graph
+        self._clock = clock
+        self._measurements = MeasurementStore(db)
         self._drafts = DraftStore(db)
         self._competencies = CompetencyRepository(db)
         self._tasks = TaskRepository(db, gateway, settings)
@@ -103,7 +137,7 @@ class TaskDesignService:
             raise UnknownCompetency(f"역량 체계에 없는 역량입니다: {', '.join(unknown)}")
         draft_id = uuid4()
         self._drafts.create(draft_id, author_id, input)
-        self._run_graph(lambda: self._workflow.start(draft_id, input))
+        self._execute(draft_id, lambda: self._workflow.start(draft_id, input))
         return self.get_draft(draft_id)
 
     def regenerate_scenarios(self, draft_id: UUID) -> Draft:
@@ -114,7 +148,7 @@ class TaskDesignService:
         self._drafts.transition(
             draft_id, DraftState.AWAITING_SCENARIO_SELECTION, DraftState.GENERATING
         )
-        self._run_graph(lambda: self._workflow.resume(draft_id, {"action": "regenerate"}))
+        self._execute(draft_id, lambda: self._workflow.resume(draft_id, {"action": "regenerate"}))
         return self.get_draft(draft_id)
 
     def get_draft(self, draft_id: UUID) -> Draft:
@@ -132,7 +166,8 @@ class TaskDesignService:
         ``UnknownCandidate`` unless ``candidate_id`` is one of its current 상황 후보.
         """
         self._drafts.select_candidate(draft_id, candidate_id)
-        self._run_graph(
+        self._execute(
+            draft_id,
             lambda: self._workflow.resume(
                 draft_id, {"action": "select", "candidate_id": str(candidate_id)}
             )
@@ -146,7 +181,7 @@ class TaskDesignService:
         Raises ``InvalidDraftState`` if the draft's last run did not fail.
         """
         self._drafts.claim_retry(draft_id)
-        self._run_graph(lambda: self._workflow.retry(draft_id))
+        self._execute(draft_id, lambda: self._workflow.retry(draft_id))
         return self.get_draft(draft_id)
 
     def review(
@@ -222,10 +257,64 @@ class TaskDesignService:
             raise InvalidEditedTask("수정본을 확정할 수 없습니다: " + "; ".join(problems) + ".")
         return task
 
-    def metrics(self, period: Interval) -> Metrics:
-        """Dashboard metrics over ``period``. (ticket 09)"""
-        raise NotImplementedError
+    def metrics(self, period: Interval | dict[str, Any]) -> Metrics:
+        """Dashboard metrics over ``period`` (start inclusive, end exclusive).
 
-    def record_activity(self, draft_id: UUID, staff_id: int, interval: Interval) -> None:
-        """Record one human-active interval. (ticket 09)"""
-        raise NotImplementedError
+        - 전면 재작성 없이 통과한 비율 = drafts 확정 with no 전면 재작성 label on any
+          component / all drafts reviewed (확정 + 반려); 반려 counts as a failure.
+        - Review metrics (ratio, 총 작업 시간, label distribution) cover drafts whose
+          review (``reviewed_at``) is in the period; unreviewed drafts are left out.
+        - 총 작업 시간 per draft = union of its 사람 활성 intervals + union of its
+          에이전트 실행 intervals (overlaps are not double counted, gaps not counted).
+        - 비용 covers every draft created in the period, with all its model calls.
+        - Targets (70%, 42분) come from ``settings.pass_ratio_target`` /
+          ``settings.work_minutes_target``; trace links need ``langfuse_project_id``.
+
+        Raises ``InvalidPeriod`` for a malformed period.
+        """
+        return compute_metrics(self.db, self.settings, _interval(period, InvalidPeriod,
+                                                               "기간"))
+
+    def record_activity(
+        self, draft_id: UUID, staff_id: int, interval: Interval | dict[str, Any]
+    ) -> None:
+        """Record one 사람 활성 구간 of ``staff_id`` working on ``draft_id``.
+
+        The UI sends only intervals in which the tab was visible and the person active.
+        Intervals may overlap or repeat (e.g. heartbeats, two tabs): metrics takes the
+        union per draft, so nothing is double counted. Any draft state is accepted.
+
+        Raises ``DraftNotFound``, ``UnknownStaff``, and ``InvalidActivityInterval``
+        (malformed, end before start, or no time zone).
+        """
+        interval = _interval(interval, InvalidActivityInterval, "활성 구간")
+        self.get_draft(draft_id)
+        with self.db.connection() as conn:
+            known = conn.execute("SELECT 1 FROM staff WHERE id = %s", (staff_id,)).fetchone()
+        if known is None:
+            raise UnknownStaff("등록되지 않은 담당자입니다.")
+        self._measurements.record(draft_id, staff_id, IntervalKind.HUMAN_ACTIVE, interval)
+
+    def _execute(self, draft_id: UUID, run: Callable[[], None]) -> None:
+        """Hand one graph execution to ``run_graph``, recording it as an 에이전트 실행 구간.
+
+        Every graph execution (start, regenerate, select_scenario incl. its fix rounds,
+        retry) goes through here; the interval is measured where the job actually runs,
+        inline or in a background thread, and is recorded even if the run fails.
+        """
+
+        def job() -> None:
+            started = self._clock()
+            try:
+                run()
+            finally:
+                ended = self._clock()
+                try:
+                    self._measurements.record(
+                        draft_id, None, IntervalKind.AGENT_RUN,
+                        Interval(start=started, end=max(started, ended)),
+                    )
+                except Exception:  # measurement must never break a run
+                    log.exception("could not record agent run of draft %s", draft_id)
+
+        self._run_graph(job)

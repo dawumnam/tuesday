@@ -50,6 +50,12 @@ class CostStore:
         """One ``Cost`` per role used by the draft, ordered by role."""
         return self._aggregate("draft_id = %s", (draft_id,))
 
+    def for_drafts(self, draft_ids: list[UUID]) -> list[Cost]:
+        """Per draft and role, for all calls of the given drafts."""
+        if not draft_ids:
+            return []
+        return self._aggregate("draft_id = ANY(%s)", (list(draft_ids),))
+
     def for_period(self, period: Interval) -> list[Cost]:
         """Per draft and role, for calls made within ``period`` (start inclusive,
         end exclusive). Calls without a draft id are left out."""
