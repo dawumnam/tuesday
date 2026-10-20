@@ -1,6 +1,7 @@
 ---
-status: open
+status: closed
 blocked-by: [06]
+closed-by: adcad58
 ---
 # 07 Self-correction loop
 
