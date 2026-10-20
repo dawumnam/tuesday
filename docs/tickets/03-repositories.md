@@ -1,5 +1,6 @@
 ---
-status: open
+status: closed
+closed-by: 30d30d9a82c1ca64bf78f18041ab158cba643aeb
 blocked-by: [01]
 ---
 # 03 Task & competency repositories
