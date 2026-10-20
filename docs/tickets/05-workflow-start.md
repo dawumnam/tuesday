@@ -1,6 +1,7 @@
 ---
-status: open
+status: closed
 blocked-by: [03]
+closed-by: 3810816
 ---
 # 05 Workflow part 1 — start, regenerate, get_draft
 
