@@ -112,6 +112,9 @@ class Settings(BaseSettings):
     # 성공 기준 (dashboard targets)
     pass_ratio_target: float = 0.70  # 전면 재작성 없이 통과한 비율 ≥ this
     work_minutes_target: float = 42.0  # 과제 1개당 총 작업 시간 ≤ this
+    # 수작업 기준선: minutes to write one 과제 by hand, before the agent (an estimate
+    # until it is measured; set TD_BASELINE_WORK_MINUTES to the measured value).
+    baseline_work_minutes: float = 60.0
 
     routing: Routing = Routing()
     use_local_llm: bool = False

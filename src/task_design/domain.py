@@ -518,6 +518,9 @@ class DraftWorkTime(BaseModel):
     agent_minutes: float
     total_minutes: float
     trace_url: str | None  # Langfuse trace of the draft (None if not configured)
+    # 자동 검증 (모의 응시 판정) result the draft went to review with: True = the last
+    # round's 판정 passed and there is no 실패 리포트; None = never judged.
+    verification_passed: bool | None = None
 
 
 class DraftCost(BaseModel):
@@ -546,7 +549,17 @@ class Metrics(BaseModel):
     mean_total_work_minutes: float | None
     work_minutes_target: float
     meets_work_minutes_target: bool | None
+    # 수작업 기준선 (settings.baseline_work_minutes) and the share of it saved:
+    # 1 − mean_total_work_minutes / baseline (negative when slower than by hand).
+    baseline_work_minutes: float
+    work_minutes_saved_ratio: float | None
+    mean_human_minutes: float | None
+    mean_agent_minutes: float | None
     work_times: list[DraftWorkTime]  # one per reviewed draft, by reviewed_at
+    # 자동 판정 vs 사람 검토, over reviewed drafts that were judged: how often
+    # "자동 검증 통과" and "전면 재작성 없이 확정" agree.
+    judged_drafts: int
+    agreeing_drafts: int
     label_distribution: dict[Component, dict[ReviewLabel, int]]
     # 비용: drafts created in the period
     costs: list[Cost]  # per draft per role

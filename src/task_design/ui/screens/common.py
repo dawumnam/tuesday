@@ -21,6 +21,7 @@ from task_design.domain import (
     Task,
     Verdict,
 )
+from task_design.settings import Settings
 from task_design.ui.texts import error_text
 
 PAGE_NEW = "새 초안"
@@ -147,6 +148,44 @@ def verdict_text(v: Verdict) -> str:
             + (f" — 실패: {', '.join(f.ko for f in v.failures)}" if v.failures else " — 통과"))
 
 
+def verdict_frame(rnd: DraftRound, settings: Settings) -> pd.DataFrame | None:
+    """판정 해석: per check, the measured value, the 통과 기준 and what the check means.
+
+    결과 is the stored 판정 (the thresholds then in force); 통과 기준 shows the current
+    settings. None before the round is judged.
+    """
+    score = {r.persona_level: r for r in rnd.mock_exam_results}
+    if rnd.verdict is None or any(level not in score for level in LEVELS):
+        return None
+    high, medium, low = (round_(score[level].mean_score) for level in LEVELS)
+    worst = max(r.score_stdev for r in rnd.mock_exam_results)
+    v = rnd.verdict
+    return pd.DataFrame([
+        {"판정 항목": "풀이 가능성", "결과": _mark(v.solvable),
+         "측정값": f"상 평균 {high}점",
+         "통과 기준": f"{settings.solvable_min_score:g}점 이상",
+         "의미": "상 수준 응시자가 AI 도구로 풀 수 있는 과제인가"},
+        {"판정 항목": "변별력", "결과": _mark(v.discriminating),
+         "측정값": f"상 {high} · 중 {medium} · 하 {low} (상−하 {round_(high - low)}점)",
+         "통과 기준": f"상 > 중 > 하, 상−하 {settings.discrimination_min_gap:g}점 이상",
+         "의미": "수준이 다른 응시자의 점수가 충분히 벌어지는가"},
+        {"판정 항목": "채점 일관성", "결과": _mark(v.consistent),
+         "측정값": f"3회 채점 표준편차 최대 {round_(worst)}점",
+         "통과 기준": f"{settings.grading_max_stdev:g}점 이하",
+         "의미": "같은 제출물을 다시 채점해도 점수가 같은가"},
+    ])
+
+
+def show_verdict(rnd: DraftRound, settings: Settings | None, *, key: str) -> None:
+    """The 판정 line, and (with settings) the table that explains its numbers."""
+    st.markdown(f"**판정**: {verdict_line(rnd)}")
+    frame = None if settings is None else verdict_frame(rnd, settings)
+    if frame is not None:
+        st.dataframe(frame, hide_index=True, width="stretch", key=key)
+        st.caption("점수는 채점 기준 100점 만점에서 페르소나별 3회 채점의 평균입니다. "
+                   "실패한 항목이 있으면 그 원인이 되는 구성요소만 자기 수정합니다.")
+
+
 def show_failure_report(report: FailureReport) -> None:
     failures = ", ".join(f.ko for f in report.failure_types) or "판정 전"
     lines = [f"**실패 리포트** · 실패 유형: {failures}"]
@@ -170,8 +209,10 @@ def show_failure_report(report: FailureReport) -> None:
             st.markdown(f"- {fix}")
 
 
-def show_evidence(draft: Draft, *, key: str) -> None:
-    """모의 응시 점수표 + 실패 리포트 + 회차 이력 (beside the review editor)."""
+def show_evidence(draft: Draft, *, key: str, settings: Settings | None = None) -> None:
+    """모의 응시 점수표 + 판정 해석 + 실패 리포트 + 회차 이력 (beside the review editor).
+
+    ``settings`` supplies the 판정 thresholds for the 판정 해석 table."""
     if draft.failure_report is not None:
         show_failure_report(draft.failure_report)
     if not draft.rounds:
@@ -180,18 +221,18 @@ def show_evidence(draft: Draft, *, key: str) -> None:
     latest = draft.rounds[-1]
     st.markdown(f"#### 모의 응시 점수표 ({latest.number}회차)")
     st.dataframe(score_frame(latest), hide_index=True, width="stretch", key=f"{key}-scores")
-    st.markdown(verdict_line(latest))
+    show_verdict(latest, settings, key=f"{key}-verdict")
     st.markdown("#### 회차 이력")
     tabs = st.tabs([f"{r.number}회차" for r in draft.rounds])
     for tab, rnd in zip(tabs, draft.rounds, strict=True):
         with tab:
-            show_round(rnd, key=f"{key}-r{rnd.number}")
+            show_round(rnd, key=f"{key}-r{rnd.number}", settings=settings)
 
 
-def show_round(rnd: DraftRound, *, key: str) -> None:
+def show_round(rnd: DraftRound, *, key: str, settings: Settings | None = None) -> None:
     st.markdown(f"**바뀐 구성요소**: {', '.join(c.ko for c in rnd.changed_components) or '없음'}")
     st.markdown(f"**바뀐 이유**: {rnd.change_reason}")
-    st.markdown(f"**판정**: {verdict_line(rnd)}")
+    show_verdict(rnd, settings, key=f"{key}-verdict")
     st.dataframe(score_frame(rnd), hide_index=True, width="stretch", key=f"{key}-scores")
     by_level = {r.persona_level: r for r in rnd.mock_exam_results}
     for level in LEVELS:

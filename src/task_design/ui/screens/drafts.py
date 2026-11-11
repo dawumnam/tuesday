@@ -107,7 +107,7 @@ def render_draft(service, draft_id: str | None, *, staff_id: int, staff: dict[in
         case DraftState.AWAITING_REVIEW:
             review.render(service, draft, staff_id=staff_id, staff=staff)
         case DraftState.CONFIRMED | DraftState.REJECTED:
-            _reviewed(draft, staff)
+            _reviewed(service, draft, staff)
     return draft
 
 
@@ -120,7 +120,7 @@ def _error_panel(service, draft: Draft) -> None:
         st.code(draft.error, language=None, wrap_lines=True)
 
 
-def _reviewed(draft: Draft, staff: dict[int, str]) -> None:
+def _reviewed(service, draft: Draft, staff: dict[int, str]) -> None:
     rv = draft.review
     if rv is not None:
         labels = " · ".join(f"{c.ko} {lb.ko}" for c, lb in rv.labels.items())
@@ -141,4 +141,4 @@ def _reviewed(draft: Draft, staff: dict[int, str]) -> None:
             with st.expander("검토자가 남긴 수정본 (과제 형식에 맞지 않아 그대로 보관)"):
                 st.json(edited)
     with right:
-        show_evidence(draft, key=f"ev-{draft.id}")
+        show_evidence(draft, key=f"ev-{draft.id}", settings=service.settings)

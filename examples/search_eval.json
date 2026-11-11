@@ -1,0 +1,14 @@
+[
+  {"input": {"competency_ids": ["C4"], "audience": {"job": "재무·회계", "career_level": "5년차"}, "difficulty": "medium", "memo": null}, "expected": ["1c47453d-28cb-5071-8bae-69513a00ead9"]},
+  {"input": {"competency_ids": ["C5"], "audience": {"job": "마케팅", "career_level": "3년차"}, "difficulty": "high", "memo": null}, "expected": ["f4de1573-fa99-55f1-96cb-d8ef8ae2536c"]},
+  {"input": {"competency_ids": ["C3"], "audience": {"job": "고객 지원", "career_level": "3년차"}, "difficulty": "low", "memo": null}, "expected": ["7a721298-bb68-5e4b-9b88-a57e0a83d177"]},
+  {"input": {"competency_ids": ["C6"], "audience": {"job": "인사", "career_level": "3년차"}, "difficulty": "high", "memo": null}, "expected": ["12c66622-768a-5e66-a628-33af061ebf39"]},
+  {"input": {"competency_ids": ["C7"], "audience": {"job": "경영기획", "career_level": "5년차"}, "difficulty": "high", "memo": null}, "expected": ["5daddd04-a19f-596a-afbc-a54dd91d66e7"]},
+  {"input": {"competency_ids": ["C8"], "audience": {"job": "구매·조달", "career_level": "5년차"}, "difficulty": "medium", "memo": null}, "expected": ["a7ffa3a5-9a7e-538b-b412-02349e200ccc"]},
+  {"input": {"competency_ids": ["C1"], "audience": {"job": "물류", "career_level": "3년차"}, "difficulty": "medium", "memo": null}, "expected": ["b531f94f-6355-511b-9d20-bd7feecd4b29", "feff7b07-da00-5f00-8dbe-e6abc90178d8"]},
+  {"input": {"competency_ids": ["C2"], "audience": {"job": "마케팅", "career_level": "신입"}, "difficulty": "medium", "memo": null}, "expected": ["00c7a797-9fdb-521d-b3f5-363b082fb89e"]},
+  {"input": {"competency_ids": ["C8"], "audience": {"job": "재무·회계", "career_level": "3년차"}, "difficulty": "low", "memo": null}, "expected": ["7c0199b3-f361-59cc-bfb2-a5cba0aeee36"]},
+  {"input": {"competency_ids": ["C6"], "audience": {"job": "공공기관 행정", "career_level": "3년차"}, "difficulty": "low", "memo": null}, "expected": ["b34fa77e-9d43-5993-a196-a3184599aabd"]},
+  {"input": {"competency_ids": ["C2"], "audience": {"job": "사내 교육", "career_level": "3년차"}, "difficulty": "medium", "memo": null}, "expected": ["5c5a5a8d-7a1b-5c1c-9f49-1016015dbb2f"]},
+  {"input": {"competency_ids": ["C7"], "audience": {"job": "인사", "career_level": "3년차"}, "difficulty": "low", "memo": null}, "expected": ["02b50ddd-9212-5f25-b756-4a84c0181e49"]}
+]

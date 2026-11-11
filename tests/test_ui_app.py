@@ -13,10 +13,11 @@ from streamlit.testing.v1 import AppTest
 
 from task_design.costs import CostStore
 from task_design.demo import FAIL_MARKER, build_demo_gateway
-from task_design.domain import Component, DraftState, ReviewLabel
+from task_design.domain import Component, DraftState, Level, ReviewLabel
 from task_design.service import TaskDesignService
 from task_design.testing.workflow import make_input, seed_similar_tasks
 from task_design.ui import runtime
+from task_design.ui.screens.common import verdict_frame
 
 APP = Path(__file__).resolve().parents[1] / "src" / "task_design" / "ui" / "app.py"
 
@@ -150,6 +151,41 @@ def test_author_cannot_review_own_draft(demo):
     assert not [b for b in at.button if b.label == "확정"]
 
 
+def test_review_screen_explains_the_verdict_numbers(demo, settings):
+    draft = _awaiting_review(demo)
+
+    at = open_app(staff=2, draft=draft.id)
+
+    tables = [d.value for d in at.dataframe if "통과 기준" in d.value.columns]
+    assert tables, "no 판정 해석 table on the review screen"
+    table = tables[0].set_index("판정 항목")
+    assert list(table.index) == ["풀이 가능성", "변별력", "채점 일관성"]
+    assert table.loc["풀이 가능성", "통과 기준"] == "70점 이상"
+    assert table.loc["변별력", "통과 기준"] == "상 > 중 > 하, 상−하 30점 이상"
+    assert table.loc["채점 일관성", "통과 기준"] == "5점 이하"
+    assert "의미" in table.columns
+
+
+def test_verdict_table_shows_measured_values_and_the_stored_result(demo, settings):
+    rnd = _awaiting_review(demo).rounds[-1]
+    high, medium, low = (
+        next(r for r in rnd.mock_exam_results if r.persona_level is level)
+        for level in (Level.HIGH, Level.MEDIUM, Level.LOW)
+    )
+
+    table = verdict_frame(rnd, settings).set_index("판정 항목")
+
+    assert table.loc["풀이 가능성", "측정값"] == f"상 평균 {round(high.mean_score, 1)}점"
+    gap = round(round(high.mean_score, 1) - round(low.mean_score, 1), 1)
+    assert table.loc["변별력", "측정값"] == (
+        f"상 {round(high.mean_score, 1)} · 중 {round(medium.mean_score, 1)} · "
+        f"하 {round(low.mean_score, 1)} (상−하 {gap}점)")
+    assert list(table["결과"]) == ["✓" if ok else "✗" for ok in (
+        rnd.verdict.solvable, rnd.verdict.discriminating, rnd.verdict.consistent)]
+    # Before the round is judged there is nothing to explain.
+    assert verdict_frame(rnd.model_copy(update={"verdict": None}), settings) is None
+
+
 def test_reviewer_must_label_before_confirming(demo):
     draft = _awaiting_review(demo)
     at = open_app(staff=2, draft=draft.id)
@@ -209,6 +245,12 @@ def test_dashboard_shows_success_criteria_in_korean(demo):
     assert "과제 1개당 총 작업 시간" in shown
     assert "구성요소별 검토 라벨 분포" in shown
     assert "초안별 LLM 비용과 호출 수" in shown
+    assert "수작업 기준선 60분 대비" in shown
+    # The session database is shared, so the counts depend on the other tests.
+    assert "자동 검증(모의 응시 판정)과 사람 검토의 일치:" in shown
+    # 발표용 요약: the same numbers as Markdown, to paste into a slide.
+    assert any("## 성공 기준 실측" in c.value and "| 과제 1개당 총 작업 시간 | 60분 |" in c.value
+               for c in at.code)
 
 
 # --- 시작 실패 ----------------------------------------------------------------------

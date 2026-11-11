@@ -13,14 +13,20 @@ Rules (decided for ticket 09; see also GLOSSARY 총 작업 시간 / 전면 재�
   staff, so overlaps count once) + union of its 에이전트 실행 intervals. Gaps between
   intervals (e.g. inactive tabs) are not counted. All of a draft's intervals count,
   whenever they happened. Reported per draft and as the mean.
+- **수작업 기준선.** ``settings.baseline_work_minutes`` (60분 by default) is what one
+  과제 took by hand; the saved share is 1 − mean 총 작업 시간 / baseline.
+- **자동 판정 vs 사람 검토.** A reviewed draft's 자동 검증 passed when its last round's
+  판정 passed all three checks and it has no 실패 리포트. It agrees with the review
+  when that equals "확정 with no 전면 재작성". Drafts never judged are left out.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import date, datetime, time, timedelta
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from task_design.costs import CostStore
 from task_design.db import Database
@@ -34,9 +40,19 @@ from task_design.domain import (
     Metrics,
     ReviewDecision,
     ReviewLabel,
+    Verdict,
 )
 from task_design.settings import Settings
 from task_design.tracing import trace_url
+
+
+KST = ZoneInfo("Asia/Seoul")
+
+
+def period_of_days(start: date, end: date) -> Interval:
+    """Calendar days in KST, end day inclusive (→ exclusive midnight after it)."""
+    return Interval(start=datetime.combine(start, time.min, KST),
+                    end=datetime.combine(end + timedelta(days=1), time.min, KST))
 
 
 def union_minutes(intervals: Iterable[tuple[datetime, datetime]]) -> float:
@@ -95,8 +111,9 @@ def compute_metrics(db: Database, settings: Settings, period: Interval) -> Metri
             """
             SELECT r.draft_id, r.decision, r.reviewed_at,
                    EXISTS (SELECT 1 FROM review_labels l
-                           WHERE l.draft_id = r.draft_id AND l.label = 'full_rewrite')
-            FROM reviews r
+                           WHERE l.draft_id = r.draft_id AND l.label = 'full_rewrite'),
+                   d.rounds -> -1 -> 'verdict', d.failure_report IS NOT NULL
+            FROM reviews r JOIN drafts d ON d.id = r.draft_id
             WHERE r.reviewed_at >= %(start)s AND r.reviewed_at < %(end)s
             ORDER BY r.reviewed_at, r.draft_id
             """,
@@ -119,7 +136,7 @@ def compute_metrics(db: Database, settings: Settings, period: Interval) -> Metri
 
     intervals = MeasurementStore(db).intervals([r[0] for r in reviews])
     work_times = []
-    for draft_id, decision, reviewed_at, full_rewrite in reviews:
+    for draft_id, decision, reviewed_at, full_rewrite, verdict, has_report in reviews:
         decision = ReviewDecision(decision)
         human = union_minutes(intervals[(draft_id, IntervalKind.HUMAN_ACTIVE)])
         agent = union_minutes(intervals[(draft_id, IntervalKind.AGENT_RUN)])
@@ -133,6 +150,10 @@ def compute_metrics(db: Database, settings: Settings, period: Interval) -> Metri
                 agent_minutes=agent,
                 total_minutes=human + agent,
                 trace_url=trace_url(settings, draft_id),
+                verification_passed=(
+                    None if verdict is None
+                    else Verdict.model_validate(verdict).passed and not has_report
+                ),
             )
         )
 
@@ -147,6 +168,8 @@ def compute_metrics(db: Database, settings: Settings, period: Interval) -> Metri
     passed = sum(w.passed for w in work_times)
     ratio = passed / reviewed if reviewed else None
     mean = sum(w.total_minutes for w in work_times) / reviewed if reviewed else None
+    baseline = settings.baseline_work_minutes
+    judged = [w for w in work_times if w.verification_passed is not None]
     return Metrics(
         period=period,
         reviewed_drafts=reviewed,
@@ -157,7 +180,15 @@ def compute_metrics(db: Database, settings: Settings, period: Interval) -> Metri
         mean_total_work_minutes=mean,
         work_minutes_target=settings.work_minutes_target,
         meets_work_minutes_target=None if mean is None else mean <= settings.work_minutes_target,
+        baseline_work_minutes=baseline,
+        work_minutes_saved_ratio=None if mean is None or baseline <= 0 else 1 - mean / baseline,
+        mean_human_minutes=(
+            sum(w.human_minutes for w in work_times) / reviewed if reviewed else None),
+        mean_agent_minutes=(
+            sum(w.agent_minutes for w in work_times) / reviewed if reviewed else None),
         work_times=work_times,
+        judged_drafts=len(judged),
+        agreeing_drafts=sum(w.verification_passed == w.passed for w in judged),
         label_distribution=labels,
         costs=costs,
         draft_costs=draft_costs,

@@ -2,25 +2,25 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta
-from zoneinfo import ZoneInfo
+from datetime import date, datetime, timedelta
 
 import altair as alt
 import pandas as pd
 import streamlit as st
 
 from task_design.domain import LABELED_COMPONENTS, Metrics, ReviewLabel
+from task_design.measurement import KST, period_of_days
+from task_design.report import agreement_text, render_report, saved_text
 from task_design.ui.screens.common import call
 
-KST = ZoneInfo("Asia/Seoul")
 # Ordinal labels → one hue, light (유지) to dark (전면 재작성).
 LABEL_COLORS = ["#9ec5f4", "#4a8fe0", "#1f4e99"]
 
 
 def period_of(start: date, end: date) -> dict[str, datetime]:
     """Calendar days in KST, end day inclusive (→ exclusive midnight after it)."""
-    return {"start": datetime.combine(start, time.min, KST),
-            "end": datetime.combine(end + timedelta(days=1), time.min, KST)}
+    period = period_of_days(start, end)
+    return {"start": period.start, "end": period.end}
 
 
 def render(service) -> None:
@@ -35,6 +35,7 @@ def render(service) -> None:
     if m is None:
         return
     _targets(m)
+    _summary(m)
     st.divider()
     _labels(m)
     st.divider()
@@ -61,10 +62,20 @@ def _targets(m: Metrics) -> None:
     c2.metric("과제 1개당 총 작업 시간", "—" if work is None else f"{work:.1f}분",
               help="사람 시간(탭이 보이고 활동 중인 구간만) + 에이전트 대기 시간의 평균.")
     c2.caption(f"목표 {m.work_minutes_target:.0f}분 이하 · {_verdict(m.meets_work_minutes_target)}")
+    if (saved := saved_text(m)) is not None:
+        c2.caption(saved)
     c3.metric("검토한 초안", f"{m.reviewed_drafts}개", help="기간 안에 최종 검토(확정·반려)된 초안")
     c3.caption(f"통과 {m.passed_drafts}개")
     c4.metric("LLM 비용 (추정)", f"${m.total_cost_usd:.4f}")
     c4.caption(f"호출 {m.total_calls:,}회 · 기간 안에 만든 초안 {len(m.draft_costs)}개")
+
+
+def _summary(m: Metrics) -> None:
+    """자동 검증 vs 사람 검토, and the 성공 기준 실측 as Markdown to paste into a slide."""
+    if (agreement := agreement_text(m)) is not None:
+        st.caption(agreement + " · 일치 = 자동 검증 통과 여부와 '전면 재작성 없이 확정' 여부가 같음")
+    with st.expander("발표용 요약 (마크다운)"):
+        st.code(render_report(m), language="markdown", wrap_lines=True)
 
 
 def _labels(m: Metrics) -> None:

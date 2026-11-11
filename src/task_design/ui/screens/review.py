@@ -36,7 +36,7 @@ def render(service, draft: Draft, *, staff_id: int, staff: dict[int, str]) -> No
         with left:
             show_task(draft.task, key=f"ro-{draft.id}")
         with right:
-            show_evidence(draft, key=f"ev-{draft.id}")
+            show_evidence(draft, key=f"ev-{draft.id}", settings=service.settings)
         return
 
     st.subheader("최종 검토")
@@ -45,7 +45,7 @@ def render(service, draft: Draft, *, staff_id: int, staff: dict[int, str]) -> No
     left, right = st.columns([3, 2], gap="large")
     with right:
         st.markdown("### 검증 근거")
-        show_evidence(draft, key=f"ev-{draft.id}")
+        show_evidence(draft, key=f"ev-{draft.id}", settings=service.settings)
     with left:
         edited, problem = _editor(draft, k)
         st.markdown("### 검토 라벨")

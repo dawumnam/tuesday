@@ -370,6 +370,9 @@ class TaskDesignService:
         - 비용 covers every draft created in the period, with all its model calls.
         - Targets (70%, 42분) come from ``settings.pass_ratio_target`` /
           ``settings.work_minutes_target``; trace links need ``langfuse_project_id``.
+        - ``work_minutes_saved_ratio`` compares the mean 총 작업 시간 with the 수작업 기준선
+          (``settings.baseline_work_minutes``); ``agreeing_drafts`` / ``judged_drafts``
+          is how often 자동 검증 (last 판정 passed, no 실패 리포트) matches the review.
 
         Raises ``InvalidPeriod`` for a malformed period.
         """
